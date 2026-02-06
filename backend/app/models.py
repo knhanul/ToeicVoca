@@ -47,6 +47,9 @@ class StudyLog(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
     vocab_id: Mapped[int] = mapped_column(ForeignKey("vocab.id"), index=True, nullable=False)
 
+    difficulty_level: Mapped[str | None] = mapped_column(String(20), index=True, nullable=True)
+    cycle_no: Mapped[int] = mapped_column(Integer, default=1, index=True, nullable=False)
+
     result: Mapped[str] = mapped_column(String(20), nullable=False)
     studied_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
@@ -61,6 +64,8 @@ class UserProgress(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
     vocab_id: Mapped[int] = mapped_column(ForeignKey("vocab.id"), index=True, nullable=False)
 
+    cycle_no: Mapped[int] = mapped_column(Integer, default=1, index=True, nullable=False)
+
     leitner_level: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     next_review_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     is_mastered: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
@@ -74,3 +79,35 @@ class UserProgress(Base):
 
     user: Mapped["User"] = relationship(back_populates="progress")
     vocab: Mapped["Vocab"] = relationship(back_populates="progress")
+
+
+class LevelCycle(Base):
+    __tablename__ = "level_cycles"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
+
+    difficulty_level: Mapped[str] = mapped_column(String(20), index=True, nullable=False)
+    cycle_no: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+
+    # active | completed_pending_confirm | completed_confirmed
+    status: Mapped[str] = mapped_column(String(40), default="active", nullable=False)
+
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class LevelDayProgress(Base):
+    __tablename__ = "level_day_progress"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
+
+    difficulty_level: Mapped[str] = mapped_column(String(20), index=True, nullable=False)
+    cycle_no: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    day: Mapped[int] = mapped_column(Integer, index=True, nullable=False)
+
+    # locked | open | completed
+    status: Mapped[str] = mapped_column(String(20), default="locked", nullable=False)
+    opened_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
