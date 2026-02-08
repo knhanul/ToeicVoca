@@ -4,13 +4,12 @@ import BoldMarkup from "../components/BoldMarkup.jsx";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "/voca/api";
 
-export default function StudyPage() {
+export default function ReviewPage() {
   const [card, setCard] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [revealMeaning, setRevealMeaning] = useState(false);
   const [user, setUser] = useState(null);
-  const [dayInfo, setDayInfo] = useState(null);
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -48,57 +47,6 @@ export default function StudyPage() {
 
   const userId = useMemo(() => user?.id || 1, [user]);
 
-  const fetchLevelStatus = useCallback(async () => {
-    const qs = new URLSearchParams({ user_id: String(userId) });
-    const r = await fetch(`${API_BASE}/levels/status?${qs.toString()}`);
-    if (!r.ok) {
-      const data = await r.json().catch(() => ({}));
-      throw new Error(data.detail || "failed to load level status");
-    }
-    const data = await r.json();
-    const level = data.levels?.find((l) => String(l.difficulty_level) === String(selectedLevel));
-    if (!level) throw new Error("level status not found");
-    return level;
-  }, [userId, selectedLevel]);
-
-  const ensureOpenDay = useCallback(async () => {
-    const level = await fetchLevelStatus();
-    setDayInfo(level);
-
-    if (level.open_day) {
-      return { ...level, open_day: level.open_day };
-    }
-
-    if (!level.next_day) {
-      throw new Error("30일 학습이 모두 완료되었습니다. (회독 완료 확인이 필요합니다)");
-    }
-    return { ...level, open_day: null };
-  }, [fetchLevelStatus, selectedLevel, userId]);
-
-  const openNextDay = useCallback(async () => {
-    const level = await fetchLevelStatus();
-    setDayInfo(level);
-
-    if (!level.next_day) {
-      throw new Error("30일 학습이 모두 완료되었습니다. (회독 완료 확인이 필요합니다)");
-    }
-
-    const r = await fetch(`${API_BASE}/levels/day/open`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ user_id: userId, difficulty_level: selectedLevel, day: level.next_day }),
-    });
-    if (!r.ok) {
-      const data = await r.json().catch(() => ({}));
-      throw new Error(data.detail || "failed to open day");
-    }
-
-    await r.json();
-    const refreshed = await fetchLevelStatus();
-    setDayInfo(refreshed);
-    return refreshed;
-  }, [fetchLevelStatus, selectedLevel, userId]);
-
   const loadNext = useCallback(() => {
     setLoading(true);
     setError(null);
@@ -106,23 +54,14 @@ export default function StudyPage() {
     setCard(null);
 
     (async () => {
-      const level = await ensureOpenDay();
-      if (!level.open_day) {
-        setCard(null);
-        return;
-      }
       const qs = new URLSearchParams({ user_id: String(userId), difficulty_level: selectedLevel });
-
-      const r = await fetch(`${API_BASE}/cards/today?${qs.toString()}`);
+      const r = await fetch(`${API_BASE}/cards/review?${qs.toString()}`);
       if (!r.ok) {
         const data = await r.json().catch(() => ({}));
         if (r.status === 404) {
-          throw new Error(
-            data.detail ||
-              `Day ${level.open_day ?? "-"}에 해당하는 단어가 없습니다. (difficulty_level/day 데이터를 확인하세요)`
-          );
+          throw new Error(data.detail || "복습할 단어가 없습니다.");
         }
-        throw new Error(data.detail || "failed to load card");
+        throw new Error(data.detail || "failed to load review card");
       }
       const data = await r.json();
       setCard(data);
@@ -180,20 +119,17 @@ export default function StudyPage() {
   }
 
   return (
-    <div style={{
-      fontFamily: "system-ui",
-      minHeight: "100vh",
-      background: "#f5f5f5"
-    }}>
-      {/* Header */}
-      <header style={{
-        background: "white",
-        padding: "16px 24px",
-        boxShadow: "0 2px 4px rgba(0,0,0,0.1)",
-        display: "flex",
-        justifyContent: "space-between",
-        alignItems: "center"
-      }}>
+    <div style={{ fontFamily: "system-ui", minHeight: "100vh", background: "#f5f5f5" }}>
+      <header
+        style={{
+          background: "white",
+          padding: "16px 24px",
+          boxShadow: "0 2px 4px rgba(0,0,0,0.1)",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+        }}
+      >
         <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
           <button
             onClick={handleBackToDashboard}
@@ -202,12 +138,12 @@ export default function StudyPage() {
               border: "none",
               fontSize: 20,
               cursor: "pointer",
-              color: "#667eea"
+              color: "#667eea",
             }}
           >
             ←
           </button>
-          <h1 style={{ margin: 0, color: "#333" }}>학습하기</h1>
+          <h1 style={{ margin: 0, color: "#333" }}>복습하기</h1>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -230,86 +166,45 @@ export default function StudyPage() {
               </button>
             ))}
           </div>
-          <div style={{ color: "#666" }}>
-            {dayInfo?.open_day ? `Day ${dayInfo.open_day}` : dayInfo?.next_day ? `Next Day ${dayInfo.next_day}` : ""}{" "}
-            {user.username}님
-          </div>
+          <div style={{ color: "#666" }}>{user.username}님</div>
         </div>
       </header>
 
-      <div style={{
-        padding: 24,
-        maxWidth: 720,
-        margin: "0 auto"
-      }}>
-        <div style={{
-          background: "white",
-          borderRadius: 12,
-          padding: 20,
-          boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
-          marginBottom: 16
-        }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-            <h2 style={{ margin: 0, color: "#333" }}>TOEIC VOCA 학습</h2>
-            <div style={{ color: "#666", fontSize: 14 }}>
-              Flashcard + Leitner Scheduling
-            </div>
-          </div>
-
+      <div style={{ padding: 24, maxWidth: 720, margin: "0 auto" }}>
+        <div
+          style={{
+            background: "white",
+            borderRadius: 12,
+            padding: 20,
+            boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
+            marginBottom: 16,
+          }}
+        >
           {error ? (
-            <div style={{ 
-              background: "#fee", 
-              border: "1px solid #fbb", 
-              padding: 12, 
-              borderRadius: 8,
-              marginBottom: 16
-            }}>
+            <div
+              style={{
+                background: "#fee",
+                border: "1px solid #fbb",
+                padding: 12,
+                borderRadius: 8,
+                marginBottom: 16,
+              }}
+            >
               {error}
             </div>
           ) : null}
 
-          <div style={{
-            border: "1px solid #ddd",
-            borderRadius: 12,
-            padding: 20,
-            background: "#fff",
-            boxShadow: "0 1px 4px rgba(0,0,0,0.06)"
-          }}>
+          <div
+            style={{
+              border: "1px solid #ddd",
+              borderRadius: 12,
+              padding: 20,
+              background: "#fff",
+              boxShadow: "0 1px 4px rgba(0,0,0,0.06)",
+            }}
+          >
             {loading ? (
               <div style={{ textAlign: "center", padding: 40 }}>로딩 중...</div>
-            ) : !dayInfo?.open_day && dayInfo?.next_day ? (
-              <div style={{ textAlign: "center", padding: 28 }}>
-                <div style={{ fontSize: 18, fontWeight: 700, color: "#333" }}>
-                  다음 학습 Day는 Day {dayInfo.next_day} 입니다.
-                </div>
-                <div style={{ color: "#666", marginTop: 8, fontSize: 14 }}>
-                  레벨을 선택하고 학습을 시작하세요.
-                </div>
-                <button
-                  onClick={() => {
-                    setLoading(true);
-                    setError(null);
-                    openNextDay()
-                      .then(() => loadNext())
-                      .catch((e) => {
-                        setError(e.message);
-                        setLoading(false);
-                      });
-                  }}
-                  style={{
-                    marginTop: 16,
-                    padding: "12px 20px",
-                    background: "#667eea",
-                    color: "white",
-                    border: "none",
-                    borderRadius: 10,
-                    cursor: "pointer",
-                    fontWeight: 700,
-                  }}
-                >
-                  Day {dayInfo.next_day} 학습 시작
-                </button>
-              </div>
             ) : card?.vocab ? (
               <>
                 <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
@@ -336,7 +231,7 @@ export default function StudyPage() {
                     border: "1px dashed #bbb",
                     cursor: "pointer",
                     background: revealMeaning ? "#f7fbff" : "#fafafa",
-                    transition: "background-color 0.2s"
+                    transition: "background-color 0.2s",
                   }}
                   title="클릭하여 뜻 보기"
                 >
@@ -367,7 +262,7 @@ export default function StudyPage() {
                       fontSize: 16,
                       fontWeight: 500,
                       cursor: loading ? "not-allowed" : "pointer",
-                      opacity: loading ? 0.7 : 1
+                      opacity: loading ? 0.7 : 1,
                     }}
                     disabled={loading}
                   >
@@ -385,7 +280,7 @@ export default function StudyPage() {
                       fontSize: 16,
                       fontWeight: 500,
                       cursor: loading ? "not-allowed" : "pointer",
-                      opacity: loading ? 0.7 : 1
+                      opacity: loading ? 0.7 : 1,
                     }}
                     disabled={loading}
                   >
@@ -403,7 +298,7 @@ export default function StudyPage() {
                       fontSize: 16,
                       fontWeight: 500,
                       cursor: loading ? "not-allowed" : "pointer",
-                      opacity: loading ? 0.7 : 1
+                      opacity: loading ? 0.7 : 1,
                     }}
                     disabled={loading}
                   >
@@ -413,9 +308,7 @@ export default function StudyPage() {
               </>
             ) : (
               <div style={{ textAlign: "center", padding: 40 }}>
-                <div style={{ fontSize: 18, color: "#666", marginBottom: 16 }}>
-                  학습할 단어가 없습니다
-                </div>
+                <div style={{ fontSize: 18, color: "#666", marginBottom: 16 }}>복습할 단어가 없습니다</div>
                 <button
                   onClick={handleBackToDashboard}
                   style={{
@@ -424,7 +317,7 @@ export default function StudyPage() {
                     color: "white",
                     border: "none",
                     borderRadius: 8,
-                    cursor: "pointer"
+                    cursor: "pointer",
                   }}
                 >
                   대시보드로 돌아가기

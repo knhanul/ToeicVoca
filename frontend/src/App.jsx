@@ -4,6 +4,7 @@ import LoginPage from "./pages/LoginPage.jsx";
 import RegisterPage from "./pages/RegisterPage.jsx";
 import DashboardPage from "./pages/DashboardPage.jsx";
 import StudyPage from "./pages/StudyPage.jsx";
+import ReviewPage from "./pages/ReviewPage.jsx";
 
 function App() {
   return (
@@ -13,6 +14,7 @@ function App() {
       <Route path="/register" element={<RegisterPage />} />
       <Route path="/dashboard" element={<DashboardPage />} />
       <Route path="/study" element={<StudyPage />} />
+      <Route path="/review" element={<ReviewPage />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

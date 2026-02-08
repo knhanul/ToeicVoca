@@ -9,6 +9,20 @@ from sqlalchemy import text
 from app.db import engine
 
 
+def _digits_only(value: str | None) -> str | None:
+    if value is None:
+        return None
+    s = "".join(ch for ch in value if ch.isdigit())
+    return s or None
+
+
+def _to_int_str(value: str | None) -> str | None:
+    if value is None:
+        return None
+    digits = _digits_only(value)
+    return digits
+
+
 def _pick(row: dict[str, str], *keys: str) -> str | None:
     for k in keys:
         if k in row and row[k] != "":
@@ -38,8 +52,8 @@ def main() -> int:
             # Level -> difficulty_level
             rows.append(
                 {
-                    "difficulty_level": _pick(row, "Level"),
-                    "day": _pick(row, "Day"),
+                    "difficulty_level": _digits_only(_pick(row, "Level")),
+                    "day": _to_int_str(_pick(row, "Day")),
                     "topic": _pick(row, "Topic"),
                     "word": _pick(row, "Word"),
                     "meaning": _pick(row, "Meaning"),
@@ -54,22 +68,33 @@ def main() -> int:
         print("No valid rows found (need at least Word and Meaning)")
         return 1
 
-    stmt = text(
+    insert_vocab_stmt = text(
         """
         INSERT INTO vocab (
             difficulty_level,
             day,
             topic,
             word,
-            meaning,
-            example_en,
-            example_kr
+            meaning
         ) VALUES (
             :difficulty_level,
             CAST(:day AS INTEGER),
             :topic,
             :word,
-            :meaning,
+            :meaning
+        )
+        RETURNING id
+        """
+    )
+
+    insert_example_stmt = text(
+        """
+        INSERT INTO vocab_examples (
+            vocab_id,
+            example_en,
+            example_kr
+        ) VALUES (
+            :vocab_id,
             :example_en,
             :example_kr
         )
@@ -77,9 +102,25 @@ def main() -> int:
     )
 
     with engine.begin() as conn:
-        conn.execute(stmt, rows)
+        inserted = 0
+        examples_inserted = 0
+        for r in rows:
+            vocab_id = conn.execute(insert_vocab_stmt, r).scalar_one()
+            inserted += 1
 
-    print(f"Inserted {len(rows)} rows into vocab")
+            if r.get("example_en") or r.get("example_kr"):
+                conn.execute(
+                    insert_example_stmt,
+                    {
+                        "vocab_id": vocab_id,
+                        "example_en": r.get("example_en"),
+                        "example_kr": r.get("example_kr"),
+                    },
+                )
+                examples_inserted += 1
+
+    print(f"Inserted {inserted} rows into vocab")
+    print(f"Inserted {examples_inserted} rows into vocab_examples")
     return 0
 
 

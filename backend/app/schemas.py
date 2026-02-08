@@ -15,8 +15,8 @@ class VocabOut(BaseModel):
     topic: str | None
     word: str
     meaning: str
-    example_en: str | None
-    example_kr: str | None
+    example_en: str | None = None
+    example_kr: str | None = None
 
 
 class CardOut(BaseModel):
@@ -108,3 +108,39 @@ class ConfirmCycleOut(BaseModel):
     user_id: int
     difficulty_level: LevelValue
     new_cycle_no: int
+
+
+class DayWordCountsOut(BaseModel):
+    day: int
+    unknown_count: int
+    unsure_count: int
+    perfect_count: int
+    total_count: int
+
+
+class RecentStudyOut(BaseModel):
+    studied_at: datetime
+    difficulty_level: str | None
+    day: int | None
+    result: ReviewGrade
+
+
+class LevelStatsOut(BaseModel):
+    difficulty_level: LevelValue
+    cycle_no: int
+
+    completed_days: int
+    total_days: int = 30
+    day_progress_pct: int
+
+    total_vocab: int
+    perfect_vocab: int
+    memorization_pct: int
+
+    day_word_counts: list[DayWordCountsOut]
+    recent_study: list[RecentStudyOut]
+
+
+class LevelsStatsOut(BaseModel):
+    user_id: int
+    levels: list[LevelStatsOut]

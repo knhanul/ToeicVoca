@@ -14,6 +14,8 @@ class User(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     username: Mapped[str] = mapped_column(String(50), unique=True, index=True, nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    current_level: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    remind_window_days: Mapped[int] = mapped_column(Integer, default=5, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
     study_logs: Mapped[list["StudyLog"]] = relationship(back_populates="user")
@@ -31,13 +33,26 @@ class Vocab(Base):
 
     word: Mapped[str] = mapped_column(String(200), index=True, nullable=False)
     meaning: Mapped[str] = mapped_column(Text, nullable=False)
-    example_en: Mapped[str | None] = mapped_column(Text, nullable=True)
-    example_kr: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
     study_logs: Mapped[list["StudyLog"]] = relationship(back_populates="vocab")
     progress: Mapped[list["UserProgress"]] = relationship(back_populates="vocab")
+    examples: Mapped[list["VocabExample"]] = relationship(back_populates="vocab", cascade="all, delete-orphan")
+
+
+class VocabExample(Base):
+    __tablename__ = "vocab_examples"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    vocab_id: Mapped[int] = mapped_column(ForeignKey("vocab.id"), index=True, nullable=False)
+
+    example_en: Mapped[str | None] = mapped_column(Text, nullable=True)
+    example_kr: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    vocab: Mapped["Vocab"] = relationship(back_populates="examples")
 
 
 class StudyLog(Base):

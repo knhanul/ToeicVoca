@@ -34,21 +34,18 @@ export default function DashboardPage() {
 
   const loadStats = async () => {
     try {
-      // TODO: 실제 API 연동
-      // 임시 데이터
-      setStats({
-        totalWords: 1500,
-        learnedWords: 856,
-        currentLevel: levels.find((l) => l.value === selectedLevel)?.label || "-",
-        studyDays: 45,
-        streakDays: 12,
-        completionRate: 57,
-        levels: [
-          { level: "600점대", total: 500, completed: 120, progress: 24, cycles: 0 },
-          { level: "800점대", total: 500, completed: 356, progress: 71, cycles: 1 },
-          { level: "900점대", total: 500, completed: 380, progress: 76, cycles: 2 },
-        ]
-      });
+      const userData = localStorage.getItem("user");
+      const u = userData ? JSON.parse(userData) : null;
+      const userId = u?.id || 1;
+
+      const qs = new URLSearchParams({ user_id: String(userId) });
+      const r = await fetch(`${API_BASE}/stats/levels?${qs.toString()}`);
+      if (!r.ok) {
+        const data = await r.json().catch(() => ({}));
+        throw new Error(data.detail || "Failed to load stats");
+      }
+      const data = await r.json();
+      setStats(data);
     } catch (error) {
       console.error("Failed to load stats:", error);
     } finally {
@@ -59,14 +56,6 @@ export default function DashboardPage() {
   const handleLevelSelect = (levelValue) => {
     setSelectedLevel(levelValue);
     localStorage.setItem("selectedDifficultyLevel", levelValue);
-    setStats((prev) =>
-      prev
-        ? {
-            ...prev,
-            currentLevel: levels.find((l) => l.value === levelValue)?.label || "-",
-          }
-        : prev
-    );
   };
 
   const handleLogout = () => {
@@ -171,70 +160,7 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* 요약 통계 */}
-        <div style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
-          gap: 20,
-          marginBottom: 32
-        }}>
-          <div style={{
-            background: "white",
-            padding: 24,
-            borderRadius: 12,
-            boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
-            textAlign: "center"
-          }}>
-            <div style={{ fontSize: 32, fontWeight: 700, color: "#667eea" }}>
-              {stats?.learnedWords}
-            </div>
-            <div style={{ color: "#666", marginTop: 4 }}>학습한 단어</div>
-            <div style={{ fontSize: 14, color: "#999", marginTop: 4 }}>
-              / {stats?.totalWords}개
-            </div>
-          </div>
-
-          <div style={{
-            background: "white",
-            padding: 24,
-            borderRadius: 12,
-            boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
-            textAlign: "center"
-          }}>
-            <div style={{ fontSize: 32, fontWeight: 700, color: "#48bb78" }}>
-              {stats?.completionRate}%
-            </div>
-            <div style={{ color: "#666", marginTop: 4 }}>전체 진행률</div>
-          </div>
-
-          <div style={{
-            background: "white",
-            padding: 24,
-            borderRadius: 12,
-            boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
-            textAlign: "center"
-          }}>
-            <div style={{ fontSize: 32, fontWeight: 700, color: "#ed8936" }}>
-              {stats?.streakDays}
-            </div>
-            <div style={{ color: "#666", marginTop: 4 }}>연속 학습일</div>
-          </div>
-
-          <div style={{
-            background: "white",
-            padding: 24,
-            borderRadius: 12,
-            boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
-            textAlign: "center"
-          }}>
-            <div style={{ fontSize: 32, fontWeight: 700, color: "#9f7aea" }}>
-              {stats?.currentLevel}
-            </div>
-            <div style={{ color: "#666", marginTop: 4 }}>현재 레벨</div>
-          </div>
-        </div>
-
-        {/* 레벨별 진행률 */}
+        {/* 레벨별 진행률 + 암기율(Perfect 기반) */}
         <div style={{
           background: "white",
           padding: 24,
@@ -242,41 +168,77 @@ export default function DashboardPage() {
           boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
           marginBottom: 32
         }}>
-          <h2 style={{ margin: "0 0 20px 0", color: "#333" }}>레벨별 학습 진행률</h2>
-          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-            {stats?.levels.map((level) => (
-              <div key={level.level} style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 16
-              }}>
-                <div style={{ width: 100, fontWeight: 500 }}>{level.level}</div>
-                <div style={{ flex: 1 }}>
-                  <div style={{
-                    height: 24,
-                    background: "#e2e8f0",
-                    borderRadius: 12,
-                    overflow: "hidden",
-                    position: "relative"
-                  }}>
-                    <div style={{
-                      height: "100%",
-                      background: level.progress === 100 ? "#48bb78" : "#667eea",
-                      width: `${level.progress}%`,
-                      transition: "width 0.3s ease"
-                    }} />
+          <h2 style={{ margin: "0 0 20px 0", color: "#333" }}>레벨별 통계</h2>
+          <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+            {stats?.levels?.map((level) => {
+              const label = levels.find((l) => l.value === level.difficulty_level)?.label || level.difficulty_level;
+              const dayProgress = level.day_progress_pct ?? 0;
+              const memoPct = level.memorization_pct ?? 0;
+              return (
+                <div key={level.difficulty_level} style={{ border: "1px solid #eee", borderRadius: 12, padding: 16 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12 }}>
+                    <div style={{ fontWeight: 700, color: "#333" }}>{label} (Cycle {level.cycle_no})</div>
+                    <div style={{ color: "#666", fontSize: 13 }}>
+                      Day 완료: {level.completed_days}/{level.total_days} ({dayProgress}%)
+                      {" · "}
+                      암기율(Perfect): {level.perfect_vocab}/{level.total_vocab} ({memoPct}%)
+                    </div>
+                  </div>
+
+                  <div style={{ marginTop: 10 }}>
+                    <div style={{ fontSize: 13, color: "#666", marginBottom: 6 }}>Day 진행률</div>
+                    <div style={{ height: 16, background: "#e2e8f0", borderRadius: 999, overflow: "hidden" }}>
+                      <div style={{ height: "100%", width: `${dayProgress}%`, background: "#667eea" }} />
+                    </div>
+                  </div>
+
+                  <div style={{ marginTop: 10 }}>
+                    <div style={{ fontSize: 13, color: "#666", marginBottom: 6 }}>암기율(Perfect)</div>
+                    <div style={{ height: 16, background: "#e2e8f0", borderRadius: 999, overflow: "hidden" }}>
+                      <div style={{ height: "100%", width: `${memoPct}%`, background: "#48bb78" }} />
+                    </div>
+                  </div>
+
+                  <div style={{ marginTop: 14, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                    <div style={{ border: "1px solid #f1f1f1", borderRadius: 10, padding: 12 }}>
+                      <div style={{ fontWeight: 700, marginBottom: 8, color: "#333" }}>진행한 Day별 현황</div>
+                      {level.day_word_counts?.length ? (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 13, color: "#444" }}>
+                          {level.day_word_counts.map((d) => (
+                            <div key={d.day} style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                              <div style={{ fontWeight: 600 }}>Day {d.day}</div>
+                              <div style={{ color: "#666" }}>
+                                모름 {d.unknown_count} / 애매 {d.unsure_count} / 완료 {d.perfect_count} (총 {d.total_count})
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div style={{ fontSize: 13, color: "#666" }}>아직 진행한 Day가 없습니다.</div>
+                      )}
+                    </div>
+
+                    <div style={{ border: "1px solid #f1f1f1", borderRadius: 10, padding: 12 }}>
+                      <div style={{ fontWeight: 700, marginBottom: 8, color: "#333" }}>최근 학습</div>
+                      {level.recent_study?.length ? (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 13, color: "#444" }}>
+                          {level.recent_study.slice(0, 8).map((r, idx) => (
+                            <div key={`${r.studied_at}-${idx}`} style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                              <div style={{ color: "#666" }}>{new Date(r.studied_at).toLocaleString()}</div>
+                              <div style={{ fontWeight: 600 }}>
+                                Day {r.day ?? "-"} · {r.result}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div style={{ fontSize: 13, color: "#666" }}>학습 기록이 없습니다.</div>
+                      )}
+                    </div>
                   </div>
                 </div>
-                <div style={{ width: 120, textAlign: "right", fontSize: 14 }}>
-                  <div>{level.completed}/{level.total} ({level.progress}%)</div>
-                  {level.cycles > 0 && (
-                    <div style={{ color: "#666" }}>
-                      {level.cycles > 1 ? `${level.cycles}번째 반복` : "1회 완료"}
-                    </div>
-                  )}
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
 
@@ -307,7 +269,7 @@ export default function DashboardPage() {
               e.target.style.boxShadow = "0 2px 8px rgba(0,0,0,0.1)";
             }}
           >
-            <div style={{ fontSize: 48, marginBottom: 16 }}>📚</div>
+            <div style={{ fontSize: 48, marginBottom: 16 }}>�</div>
             <h3 style={{ margin: "0 0 8px 0", color: "#333" }}>학습 시작</h3>
             <p style={{ margin: 0, color: "#666", fontSize: 14 }}>
               오늘의 단어 학습하기
@@ -339,62 +301,6 @@ export default function DashboardPage() {
             <h3 style={{ margin: "0 0 8px 0", color: "#333" }}>복습</h3>
             <p style={{ margin: 0, color: "#666", fontSize: 14 }}>
               배운 단어 복습하기
-            </p>
-          </Link>
-
-          <Link
-            to="/statistics"
-            style={{
-              background: "white",
-              padding: 32,
-              borderRadius: 12,
-              boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
-              textDecoration: "none",
-              color: "inherit",
-              textAlign: "center",
-              transition: "transform 0.2s, box-shadow 0.2s"
-            }}
-            onMouseEnter={(e) => {
-              e.target.style.transform = "translateY(-4px)";
-              e.target.style.boxShadow = "0 4px 16px rgba(0,0,0,0.15)";
-            }}
-            onMouseLeave={(e) => {
-              e.target.style.transform = "translateY(0)";
-              e.target.style.boxShadow = "0 2px 8px rgba(0,0,0,0.1)";
-            }}
-          >
-            <div style={{ fontSize: 48, marginBottom: 16 }}>📊</div>
-            <h3 style={{ margin: "0 0 8px 0", color: "#333" }}>통계</h3>
-            <p style={{ margin: 0, color: "#666", fontSize: 14 }}>
-              학습 통계 보기
-            </p>
-          </Link>
-
-          <Link
-            to="/settings"
-            style={{
-              background: "white",
-              padding: 32,
-              borderRadius: 12,
-              boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
-              textDecoration: "none",
-              color: "inherit",
-              textAlign: "center",
-              transition: "transform 0.2s, box-shadow 0.2s"
-            }}
-            onMouseEnter={(e) => {
-              e.target.style.transform = "translateY(-4px)";
-              e.target.style.boxShadow = "0 4px 16px rgba(0,0,0,0.15)";
-            }}
-            onMouseLeave={(e) => {
-              e.target.style.transform = "translateY(0)";
-              e.target.style.boxShadow = "0 2px 8px rgba(0,0,0,0.1)";
-            }}
-          >
-            <div style={{ fontSize: 48, marginBottom: 16 }}>⚙️</div>
-            <h3 style={{ margin: "0 0 8px 0", color: "#333" }}>설정</h3>
-            <p style={{ margin: 0, color: "#666", fontSize: 14 }}>
-              학습 설정 관리
             </p>
           </Link>
         </div>
