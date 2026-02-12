@@ -320,56 +320,54 @@ export default function RemindPage() {
                 ) : null}
 
                 {/* Buttons */}
-                {revealMeaning ? (
-                  <div style={{
-                    display: "flex",
-                    gap: 12,
-                    justifyContent: "center"
-                  }}>
-                    <button
-                      onClick={() => submit("again")}
-                      style={{
-                        padding: "12px 20px",
-                        background: "#e53e3e",
-                        color: "white",
-                        border: "none",
-                        borderRadius: 10,
-                        cursor: "pointer",
-                        fontWeight: 700,
-                      }}
-                    >
-                      모름 (Again)
-                    </button>
-                    <button
-                      onClick={() => submit("good")}
-                      style={{
-                        padding: "12px 20px",
-                        background: "#ed8936",
-                        color: "white",
-                        border: "none",
-                        borderRadius: 10,
-                        cursor: "pointer",
-                        fontWeight: 700,
-                      }}
-                    >
-                      애매 (Good)
-                    </button>
-                    <button
-                      onClick={() => submit("perfect")}
-                      style={{
-                        padding: "12px 20px",
-                        background: "#38a169",
-                        color: "white",
-                        border: "none",
-                        borderRadius: 10,
-                        cursor: "pointer",
-                        fontWeight: 700,
-                      }}
-                    >
-                      완벽함 (Perfect)
-                    </button>
-                  </div>
-                ) : null}
+                <div style={{
+                  display: "flex",
+                  gap: 12,
+                  justifyContent: "center"
+                }}>
+                  <button
+                    onClick={() => submit("again")}
+                    style={{
+                      padding: "12px 20px",
+                      background: "#e53e3e",
+                      color: "white",
+                      border: "none",
+                      borderRadius: 10,
+                      cursor: "pointer",
+                      fontWeight: 700,
+                    }}
+                  >
+                    모름 (Again)
+                  </button>
+                  <button
+                    onClick={() => submit("good")}
+                    style={{
+                      padding: "12px 20px",
+                      background: "#ed8936",
+                      color: "white",
+                      border: "none",
+                      borderRadius: 10,
+                      cursor: "pointer",
+                      fontWeight: 700,
+                    }}
+                  >
+                    애매 (Good)
+                  </button>
+                  <button
+                    onClick={() => submit("perfect")}
+                    style={{
+                      padding: "12px 20px",
+                      background: "#38a169",
+                      color: "white",
+                      border: "none",
+                      borderRadius: 10,
+                      cursor: "pointer",
+                      fontWeight: 700,
+                    }}
+                  >
+                    완벽함 (Perfect)
+                  </button>
+                </div>
               </div>
             )}
           </div>

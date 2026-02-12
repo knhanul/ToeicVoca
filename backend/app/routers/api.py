@@ -331,10 +331,12 @@ def get_remind_card(
         ).scalar_one()
         current_day = int(last_completed or 1)
 
-    start_day = max(1, current_day - 7 + 1)
+    # Curriculum Day 기준 최근 7일 윈도우 (날짜 기준 아님)
+    REMIND_CURRICULUM_DAYS = 7
+    start_day = max(1, current_day - REMIND_CURRICULUM_DAYS + 1)
 
     # recent 7 curriculum days studied vocab ids for this level+cycle
-    # - only include vocabs whose latest result is NOT perfect
+    # - only include vocabs whose latest result is NOT perfect (Perfect가 아닌 모든 결과 대상)
     latest_ts_subq = (
         select(StudyLog.vocab_id.label("vocab_id"), func.max(StudyLog.studied_at).label("max_ts"))
         .join(Vocab, Vocab.id == StudyLog.vocab_id)
@@ -363,7 +365,7 @@ def get_remind_card(
                 StudyLog.user_id == user_id,
                 StudyLog.cycle_no == cycle.cycle_no,
                 StudyLog.difficulty_level == difficulty_level,
-                StudyLog.result.in_(["again", "good"]),
+                StudyLog.result != "perfect",  # Perfect가 아닌 모든 결과 대상
             )
         )
     )
@@ -394,9 +396,9 @@ def get_remind_card(
         progress, vocab = row
         return CardOut(
             vocab=_vocab_out_with_random_example(db, vocab=vocab),
-            leitner_level=progress.leitner_level,
-            next_review_date=progress.next_review_date,
-            is_mastered=progress.is_mastered,
+            leitner_level=None,      # 리마인드는 처음 보는 것처럼 동작
+            next_review_date=None,   # 리마인드는 처음 보는 것처럼 동작
+            is_mastered=None,        # 리마인드는 처음 보는 것처럼 동작
         )
 
     raise HTTPException(status_code=404, detail="no remind cards")
@@ -876,13 +878,9 @@ def get_levels_stats(user_id: int = Query(...), db: Session = Depends(get_db)):
             .limit(20)
         ).all()
 
-        # word가 None이면 기본값 제공
+        # word가 None이면 기본값 제공 (LEFT JOIN으로 이미 가져왔으므로 추가 쿼리 불필요)
         recent_study: list[RecentStudyOut] = []
         for (ts, dl, vocab_id, day, res, word) in recent_rows:
-            resolved_word = word
-            if resolved_word is None and vocab_id is not None:
-                resolved_word = db.execute(select(Vocab.word).where(Vocab.id == vocab_id)).scalar_one_or_none()
-
             recent_study.append(
                 RecentStudyOut(
                     studied_at=ts,
@@ -890,7 +888,7 @@ def get_levels_stats(user_id: int = Query(...), db: Session = Depends(get_db)):
                     vocab_id=vocab_id,
                     day=day,
                     result=res,
-                    word=str(resolved_word) if resolved_word is not None else f"Day{day}단어",
+                    word=str(word) if word is not None else f"Day{day}단어",
                 )
             )
 
