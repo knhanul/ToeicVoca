@@ -15,11 +15,12 @@ from ..schemas import (
     CompleteDayOut,
     ConfirmCycleIn,
     ConfirmCycleOut,
+    CurrentDayProgressOut,
     DayWordCountsOut,
-    LevelsStatusOut,
     LevelsStatsOut,
-    LevelStatusOut,
     LevelStatsOut,
+    LevelsStatusOut,
+    LevelStatusOut,
     OpenDayIn,
     OpenDayOut,
     RecentStudyOut,
@@ -175,146 +176,6 @@ def get_levels_status(user_id: int = Query(...), db: Session = Depends(get_db)):
     return LevelsStatusOut(user_id=user_id, levels=levels)
 
 
-@api_router.get("/stats/levels", response_model=LevelsStatsOut)
-def get_levels_stats(user_id: int = Query(...), db: Session = Depends(get_db)):
-    user = db.get(User, user_id)
-    if user is None:
-        raise HTTPException(status_code=404, detail="user not found")
-
-    levels_out: list[LevelStatsOut] = []
-
-    for level in ["600", "800", "900"]:
-        cycle = _get_or_create_active_cycle(db, user_id=user_id, difficulty_level=level)
-        _ensure_day_rows(db, user_id=user_id, difficulty_level=level, cycle_no=cycle.cycle_no)
-
-        # Day progress (30-day 기준 완료 Day 수)
-        completed_days = db.execute(
-            select(func.count(LevelDayProgress.id)).where(
-                and_(
-                    LevelDayProgress.user_id == user_id,
-                    LevelDayProgress.difficulty_level == level,
-                    LevelDayProgress.cycle_no == cycle.cycle_no,
-                    LevelDayProgress.status == "completed",
-                )
-            )
-        ).scalar_one()
-
-        day_progress_pct = int((int(completed_days) / 30) * 100)
-
-        # 암기율(Perfect 기반): 레벨 전체 단어 중 perfect 최종 판정 단어 수
-        total_vocab = db.execute(select(func.count(Vocab.id)).where(Vocab.difficulty_level == level)).scalar_one()
-
-        latest_ts_subq = (
-            select(StudyLog.vocab_id.label("vocab_id"), func.max(StudyLog.studied_at).label("max_ts"))
-            .where(
-                and_(
-                    StudyLog.user_id == user_id,
-                    StudyLog.difficulty_level == level,
-                    StudyLog.cycle_no == cycle.cycle_no,
-                )
-            )
-            .group_by(StudyLog.vocab_id)
-            .subquery()
-        )
-
-        latest_logs_subq = (
-            select(StudyLog.vocab_id.label("vocab_id"), StudyLog.result.label("result"))
-            .join(
-                latest_ts_subq,
-                and_(StudyLog.vocab_id == latest_ts_subq.c.vocab_id, StudyLog.studied_at == latest_ts_subq.c.max_ts),
-            )
-            .subquery()
-        )
-
-        perfect_vocab = db.execute(
-            select(func.count()).select_from(latest_logs_subq).where(latest_logs_subq.c.result == "perfect")
-        ).scalar_one()
-
-        memorization_pct = 0
-        if int(total_vocab) > 0:
-            memorization_pct = int((int(perfect_vocab) / int(total_vocab)) * 100)
-
-        # Day별(모름/애매/완료) 집계: 해당 레벨에서 진행한 day(status open/completed)에 대해서만
-        progressed_days = db.execute(
-            select(LevelDayProgress.day)
-            .where(
-                and_(
-                    LevelDayProgress.user_id == user_id,
-                    LevelDayProgress.difficulty_level == level,
-                    LevelDayProgress.cycle_no == cycle.cycle_no,
-                    LevelDayProgress.status.in_(["open", "completed"]),
-                )
-            )
-            .order_by(LevelDayProgress.day.asc())
-        ).scalars().all()
-
-        # Latest result per vocab, joined to vocab for day
-        day_result_rows = db.execute(
-            select(Vocab.day, latest_logs_subq.c.result, func.count())
-            .join(latest_logs_subq, latest_logs_subq.c.vocab_id == Vocab.id)
-            .where(and_(Vocab.difficulty_level == level, Vocab.day.is_not(None)))
-            .group_by(Vocab.day, latest_logs_subq.c.result)
-        ).all()
-
-        counts_by_day: dict[int, dict[str, int]] = {}
-        for d, r, cnt in day_result_rows:
-            if d is None:
-                continue
-            counts_by_day.setdefault(int(d), {})[str(r)] = int(cnt)
-
-        day_word_counts: list[DayWordCountsOut] = []
-        for d in progressed_days:
-            d_int = int(d)
-            total_day_vocab = db.execute(
-                select(func.count(Vocab.id)).where(and_(Vocab.difficulty_level == level, Vocab.day == d_int))
-            ).scalar_one()
-            result_counts = counts_by_day.get(d_int, {})
-            unknown = int(result_counts.get("again", 0))
-            unsure = int(result_counts.get("good", 0))
-            perfect = int(result_counts.get("perfect", 0))
-            day_word_counts.append(
-                DayWordCountsOut(
-                    day=d_int,
-                    unknown_count=unknown,
-                    unsure_count=unsure,
-                    perfect_count=perfect,
-                    total_count=int(total_day_vocab),
-                )
-            )
-
-        # 최근 학습 현황 (최근 20개)
-        recent_rows = db.execute(
-            select(StudyLog.studied_at, StudyLog.difficulty_level, Vocab.day, StudyLog.result)
-            .join(Vocab, Vocab.id == StudyLog.vocab_id)
-            .where(
-                and_(StudyLog.user_id == user_id, StudyLog.difficulty_level == level, StudyLog.cycle_no == cycle.cycle_no)
-            )
-            .order_by(StudyLog.studied_at.desc())
-            .limit(20)
-        ).all()
-
-        recent_study = [
-            RecentStudyOut(studied_at=ts, difficulty_level=dl, day=day, result=res) for (ts, dl, day, res) in recent_rows
-        ]
-
-        levels_out.append(
-            LevelStatsOut(
-                difficulty_level=level,
-                cycle_no=cycle.cycle_no,
-                completed_days=int(completed_days),
-                day_progress_pct=int(day_progress_pct),
-                total_vocab=int(total_vocab),
-                perfect_vocab=int(perfect_vocab),
-                memorization_pct=int(memorization_pct),
-                day_word_counts=day_word_counts,
-                recent_study=recent_study,
-            )
-        )
-
-    db.commit()
-    return LevelsStatsOut(user_id=user_id, levels=levels_out)
-
-
 @api_router.post("/levels/day/open", response_model=OpenDayOut)
 def open_day(payload: OpenDayIn, db: Session = Depends(get_db)):
     user = db.get(User, payload.user_id)
@@ -454,22 +315,57 @@ def get_remind_card(
     cycle = _get_or_create_active_cycle(db, user_id=user_id, difficulty_level=difficulty_level)
     _ensure_day_rows(db, user_id=user_id, difficulty_level=difficulty_level, cycle_no=cycle.cycle_no)
 
-    now = datetime.utcnow()
-    window_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    window_start = window_start - timedelta(days=7)
+    open_day = _get_open_day(db, user_id=user_id, difficulty_level=difficulty_level, cycle_no=cycle.cycle_no)
+    if open_day is not None:
+        current_day = int(open_day.day)
+    else:
+        last_completed = db.execute(
+            select(func.max(LevelDayProgress.day)).where(
+                and_(
+                    LevelDayProgress.user_id == user_id,
+                    LevelDayProgress.difficulty_level == difficulty_level,
+                    LevelDayProgress.cycle_no == cycle.cycle_no,
+                    LevelDayProgress.status == "completed",
+                )
+            )
+        ).scalar_one()
+        current_day = int(last_completed or 1)
 
-    # recent 7 days studied vocab ids for this level+cycle
-    recent_vocab_ids_stmt = (
-        select(StudyLog.vocab_id)
+    start_day = max(1, current_day - 7 + 1)
+
+    # recent 7 curriculum days studied vocab ids for this level+cycle
+    # - only include vocabs whose latest result is NOT perfect
+    latest_ts_subq = (
+        select(StudyLog.vocab_id.label("vocab_id"), func.max(StudyLog.studied_at).label("max_ts"))
+        .join(Vocab, Vocab.id == StudyLog.vocab_id)
         .where(
             and_(
                 StudyLog.user_id == user_id,
                 StudyLog.cycle_no == cycle.cycle_no,
                 StudyLog.difficulty_level == difficulty_level,
-                StudyLog.studied_at >= window_start,
+                Vocab.day.is_not(None),
+                Vocab.day >= start_day,
+                Vocab.day <= current_day,
             )
         )
         .group_by(StudyLog.vocab_id)
+        .subquery()
+    )
+
+    recent_vocab_ids_stmt = (
+        select(StudyLog.vocab_id)
+        .join(
+            latest_ts_subq,
+            and_(StudyLog.vocab_id == latest_ts_subq.c.vocab_id, StudyLog.studied_at == latest_ts_subq.c.max_ts),
+        )
+        .where(
+            and_(
+                StudyLog.user_id == user_id,
+                StudyLog.cycle_no == cycle.cycle_no,
+                StudyLog.difficulty_level == difficulty_level,
+                StudyLog.result.in_(["again", "good"]),
+            )
+        )
     )
 
     # Prefer non-mastered or wrong_count>0
@@ -483,7 +379,6 @@ def get_remind_card(
                 UserProgress.cycle_no == cycle.cycle_no,
                 Vocab.id.in_(recent_vocab_ids_stmt),
                 Vocab.difficulty_level == difficulty_level,
-                UserProgress.is_mastered.is_(False),
                 or_(
                     UserProgress.next_review_date.is_(None),
                     UserProgress.next_review_date <= today,
@@ -846,4 +741,224 @@ def confirm_cycle(payload: ConfirmCycleIn, db: Session = Depends(get_db)):
         user_id=payload.user_id,
         difficulty_level=payload.difficulty_level,
         new_cycle_no=new_cycle_no,
+    )
+
+
+@api_router.get("/stats/levels", response_model=LevelsStatsOut)
+def get_levels_stats(user_id: int = Query(...), db: Session = Depends(get_db)):
+    print(f"=== API CALLED: get_levels_stats with user_id={user_id} ===")  # 이 줄 추가
+    user = db.get(User, user_id)
+    if user is None:
+        print(f"User not found: {user_id}")  # 이 줄 추가
+        raise HTTPException(status_code=404, detail="user not found")
+
+    levels_out: list[LevelStatsOut] = []
+
+    for level in ["600", "800", "900"]:
+        cycle = _get_or_create_active_cycle(db, user_id=user_id, difficulty_level=level)
+        _ensure_day_rows(db, user_id=user_id, difficulty_level=level, cycle_no=cycle.cycle_no)
+
+        # Day progress (30-day 기준 완료 Day 수)
+        completed_days = db.execute(
+            select(func.count(LevelDayProgress.id)).where(
+                and_(
+                    LevelDayProgress.user_id == user_id,
+                    LevelDayProgress.difficulty_level == level,
+                    LevelDayProgress.cycle_no == cycle.cycle_no,
+                    LevelDayProgress.status == "completed",
+                )
+            )
+        ).scalar_one()
+
+        day_progress_pct = int((int(completed_days) / 30) * 100)
+
+        # 암기율(Perfect 기반): 레벨 전체 단어 중 perfect 최종 판정 단어 수
+        total_vocab = db.execute(select(func.count(Vocab.id)).where(Vocab.difficulty_level == level)).scalar_one()
+
+        latest_ts_subq = (
+            select(StudyLog.vocab_id.label("vocab_id"), func.max(StudyLog.studied_at).label("max_ts"))
+            .where(
+                and_(
+                    StudyLog.user_id == user_id,
+                    StudyLog.difficulty_level == level,
+                    StudyLog.cycle_no == cycle.cycle_no,
+                )
+            )
+            .group_by(StudyLog.vocab_id)
+            .subquery()
+        )
+
+        latest_logs_subq = (
+            select(StudyLog.vocab_id.label("vocab_id"), StudyLog.result.label("result"))
+            .join(
+                latest_ts_subq,
+                and_(StudyLog.vocab_id == latest_ts_subq.c.vocab_id, StudyLog.studied_at == latest_ts_subq.c.max_ts),
+            )
+            .subquery()
+        )
+
+        perfect_vocab = db.execute(
+            select(func.count()).select_from(latest_logs_subq).where(latest_logs_subq.c.result == "perfect")
+        ).scalar_one()
+
+        memorization_pct = 0
+        if int(total_vocab) > 0:
+            memorization_pct = int((int(perfect_vocab) / int(total_vocab)) * 100)
+
+        # Day별(모름/애매/완료) 집계: 해당 레벨에서 진행한 day(status open/completed)에 대해서만
+        progressed_days = db.execute(
+            select(LevelDayProgress.day)
+            .where(
+                and_(
+                    LevelDayProgress.user_id == user_id,
+                    LevelDayProgress.difficulty_level == level,
+                    LevelDayProgress.cycle_no == cycle.cycle_no,
+                    LevelDayProgress.status.in_(["open", "completed"]),
+                )
+            )
+            .order_by(LevelDayProgress.day.asc())
+        ).scalars().all()
+
+        # Latest result per vocab, joined to vocab for day
+        day_result_rows = db.execute(
+            select(Vocab.day, latest_logs_subq.c.result, func.count())
+            .join(latest_logs_subq, latest_logs_subq.c.vocab_id == Vocab.id)
+            .where(and_(Vocab.difficulty_level == level, Vocab.day.is_not(None)))
+            .group_by(Vocab.day, latest_logs_subq.c.result)
+        ).all()
+
+        counts_by_day: dict[int, dict[str, int]] = {}
+        for d, r, cnt in day_result_rows:
+            if d is None:
+                continue
+            counts_by_day.setdefault(int(d), {})[str(r)] = int(cnt)
+
+        day_word_counts: list[DayWordCountsOut] = []
+        for d in progressed_days:
+            d_int = int(d)
+            total_day_vocab = db.execute(
+                select(func.count(Vocab.id)).where(and_(Vocab.difficulty_level == level, Vocab.day == d_int))
+            ).scalar_one()
+            result_counts = counts_by_day.get(d_int, {})
+            unknown = int(result_counts.get("again", 0))
+            unsure = int(result_counts.get("good", 0))
+            perfect = int(result_counts.get("perfect", 0))
+            day_word_counts.append(
+                DayWordCountsOut(
+                    day=d_int,
+                    unknown_count=unknown,
+                    unsure_count=unsure,
+                    perfect_count=perfect,
+                    total_count=int(total_day_vocab),
+                )
+            )
+
+        # 최근 학습 현황 (최근 20개)
+        recent_rows = db.execute(
+            select(
+                StudyLog.studied_at,
+                StudyLog.difficulty_level,
+                StudyLog.vocab_id,
+                Vocab.day,
+                StudyLog.result,
+                Vocab.word,
+            )
+            .outerjoin(Vocab, Vocab.id == StudyLog.vocab_id)  # LEFT JOIN으로 변경
+            .where(
+                and_(
+                    StudyLog.user_id == user_id,
+                    StudyLog.difficulty_level == level,
+                    StudyLog.cycle_no == cycle.cycle_no,
+                    StudyLog.vocab_id.is_not(None),
+                )
+            )
+            .order_by(StudyLog.studied_at.desc())
+            .limit(20)
+        ).all()
+
+        # word가 None이면 기본값 제공
+        recent_study: list[RecentStudyOut] = []
+        for (ts, dl, vocab_id, day, res, word) in recent_rows:
+            resolved_word = word
+            if resolved_word is None and vocab_id is not None:
+                resolved_word = db.execute(select(Vocab.word).where(Vocab.id == vocab_id)).scalar_one_or_none()
+
+            recent_study.append(
+                RecentStudyOut(
+                    studied_at=ts,
+                    difficulty_level=dl,
+                    vocab_id=vocab_id,
+                    day=day,
+                    result=res,
+                    word=str(resolved_word) if resolved_word is not None else f"Day{day}단어",
+                )
+            )
+
+        levels_out.append(
+            LevelStatsOut(
+                difficulty_level=level,
+                cycle_no=cycle.cycle_no,
+                completed_days=int(completed_days),
+                day_progress_pct=int(day_progress_pct),
+                total_vocab=int(total_vocab),
+                perfect_vocab=int(perfect_vocab),
+                memorization_pct=int(memorization_pct),
+                day_word_counts=day_word_counts,
+                recent_study=recent_study,
+            )
+        )
+
+    db.commit()
+    return LevelsStatsOut(user_id=user_id, levels=levels_out)
+
+
+@api_router.get("/stats/current-day", response_model=CurrentDayProgressOut)
+def get_current_day_progress(
+    user_id: int = Query(...), difficulty_level: str = Query(...), db: Session = Depends(get_db)
+):
+    user = db.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="user not found")
+
+    cycle = _get_or_create_active_cycle(db, user_id=user_id, difficulty_level=difficulty_level)
+    _ensure_day_rows(db, user_id=user_id, difficulty_level=difficulty_level, cycle_no=cycle.cycle_no)
+
+    open_day = _get_open_day(db, user_id=user_id, difficulty_level=difficulty_level, cycle_no=cycle.cycle_no)
+
+    day_val = open_day.day if open_day else None
+
+    total_words = 0
+    progressed_words = 0
+
+    if day_val is not None:
+        total_words = db.execute(
+            select(func.count(Vocab.id)).where(
+                and_(Vocab.difficulty_level == difficulty_level, Vocab.day == day_val)
+            )
+        ).scalar_one()
+
+        progressed_words = db.execute(
+            select(func.count(UserProgress.id))
+            .join(Vocab, UserProgress.vocab_id == Vocab.id)
+            .where(
+                and_(
+                    UserProgress.user_id == user_id,
+                    UserProgress.cycle_no == cycle.cycle_no,
+                    Vocab.difficulty_level == difficulty_level,
+                    Vocab.day == day_val,
+                )
+            )
+        ).scalar_one()
+
+    progress_pct = 0
+    if int(total_words) > 0:
+        progress_pct = int((int(progressed_words) / int(total_words)) * 100)
+
+    return CurrentDayProgressOut(
+        difficulty_level=difficulty_level,
+        cycle_no=cycle.cycle_no,
+        day=day_val,
+        total_words=int(total_words),
+        progressed_words=int(progressed_words),
+        progress_pct=int(progress_pct),
     )

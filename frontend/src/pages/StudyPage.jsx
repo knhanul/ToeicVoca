@@ -11,6 +11,7 @@ export default function StudyPage() {
   const [revealMeaning, setRevealMeaning] = useState(false);
   const [user, setUser] = useState(null);
   const [dayInfo, setDayInfo] = useState(null);
+  const [dayProgress, setDayProgress] = useState(null);
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -66,21 +67,27 @@ export default function StudyPage() {
     setDayInfo(level);
 
     if (level.open_day) {
+      // 오픈된 Day가 있으면 진행률도 함께 조회
+      try {
+        const qs = new URLSearchParams({ user_id: String(userId), difficulty_level: selectedLevel });
+        const r = await fetch(`${API_BASE}/stats/current-day?${qs.toString()}`);
+        if (r.ok) {
+          const data = await r.json();
+          setDayProgress(data);
+        }
+      } catch (e) {
+        console.warn("Failed to load current day progress:", e);
+      }
       return { ...level, open_day: level.open_day };
     }
 
     if (!level.next_day) {
       throw new Error("30일 학습이 모두 완료되었습니다. (회독 완료 확인이 필요합니다)");
     }
-    return { ...level, open_day: null };
-  }, [fetchLevelStatus, selectedLevel, userId]);
 
-  const openNextDay = useCallback(async () => {
-    const level = await fetchLevelStatus();
-    setDayInfo(level);
-
-    if (!level.next_day) {
-      throw new Error("30일 학습이 모두 완료되었습니다. (회독 완료 확인이 필요합니다)");
+    const ok = window.confirm(`오늘은 Day ${level.next_day} 학습을 시작할까요?`);
+    if (!ok) {
+      throw new Error("오늘 학습을 시작하지 않았습니다. 리마인드를 이용하거나 대시보드로 돌아가세요.");
     }
 
     const r = await fetch(`${API_BASE}/levels/day/open`, {
@@ -93,10 +100,21 @@ export default function StudyPage() {
       throw new Error(data.detail || "failed to open day");
     }
 
-    await r.json();
+    const opened = await r.json();
     const refreshed = await fetchLevelStatus();
     setDayInfo(refreshed);
-    return refreshed;
+    // 오픈 후 진행률 다시 조회
+    try {
+      const qs = new URLSearchParams({ user_id: String(userId), difficulty_level: selectedLevel });
+      const r2 = await fetch(`${API_BASE}/stats/current-day?${qs.toString()}`);
+      if (r2.ok) {
+        const data = await r2.json();
+        setDayProgress(data);
+      }
+    } catch (e) {
+      console.warn("Failed to load current day progress after open:", e);
+    }
+    return { ...refreshed, open_day: opened.day };
   }, [fetchLevelStatus, selectedLevel, userId]);
 
   const loadNext = useCallback(() => {
@@ -255,6 +273,47 @@ export default function StudyPage() {
               Flashcard + Leitner Scheduling
             </div>
           </div>
+
+          {dayProgress && dayProgress.day ? (
+            <div style={{
+              background: "#f7fbff",
+              border: "1px solid #cfe2ff",
+              borderRadius: 10,
+              padding: 14,
+              marginBottom: 16,
+              fontSize: 14,
+              color: "#333"
+            }}>
+              <div style={{ fontWeight: 700, marginBottom: 6 }}>
+                Day {dayProgress.day} 진행률
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <div style={{ flex: 1, height: 16, background: "#e2e8f0", borderRadius: 999, overflow: "hidden" }}>
+                  <div style={{ height: "100%", width: `${dayProgress.progress_pct}%`, background: "#667eea" }} />
+                </div>
+                <div style={{ fontWeight: 600, minWidth: 80, textAlign: "right" }}>
+                  {dayProgress.progressed_words}/{dayProgress.total_words} ({dayProgress.progress_pct}%)
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          {/* Day Topic 크게 표시 */}
+          {card?.vocab?.topic ? (
+            <div style={{
+              background: "#fff8e1",
+              border: "1px solid #ffecb3",
+              borderRadius: 10,
+              padding: 16,
+              marginBottom: 16,
+              fontSize: 16,
+              fontWeight: 700,
+              color: "#b8860b",
+              textAlign: "center"
+            }}>
+              Day {card.vocab.day} 주제: {card.vocab.topic}
+            </div>
+          ) : null}
 
           {error ? (
             <div style={{ 

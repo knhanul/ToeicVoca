@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     db_name: str = Field(default="HackersVoca", validation_alias="DB_NAME")
 
     cors_allow_origins: str = "*"
+    sql_echo: bool = Field(default=False, validation_alias="SQL_ECHO")
 
     @property
     def database_url(self) -> str:

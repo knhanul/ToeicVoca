@@ -110,8 +110,11 @@ class ConfirmCycleOut(BaseModel):
     new_cycle_no: int
 
 
+# Statistics
+
 class DayWordCountsOut(BaseModel):
     day: int
+    topic: str | None = None
     unknown_count: int
     unsure_count: int
     perfect_count: int
@@ -121,22 +124,21 @@ class DayWordCountsOut(BaseModel):
 class RecentStudyOut(BaseModel):
     studied_at: datetime
     difficulty_level: str | None
+    vocab_id: int | None = None
     day: int | None
     result: ReviewGrade
+    word: str | None = None
 
 
 class LevelStatsOut(BaseModel):
     difficulty_level: LevelValue
     cycle_no: int
-
     completed_days: int
     total_days: int = 30
     day_progress_pct: int
-
     total_vocab: int
     perfect_vocab: int
     memorization_pct: int
-
     day_word_counts: list[DayWordCountsOut]
     recent_study: list[RecentStudyOut]
 
@@ -144,3 +146,12 @@ class LevelStatsOut(BaseModel):
 class LevelsStatsOut(BaseModel):
     user_id: int
     levels: list[LevelStatsOut]
+
+
+class CurrentDayProgressOut(BaseModel):
+    difficulty_level: LevelValue
+    cycle_no: int
+    day: int | None
+    total_words: int
+    progressed_words: int
+    progress_pct: int
