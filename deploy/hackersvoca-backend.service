@@ -1,0 +1,25 @@
+[Unit]
+Description=HackersVoca Backend API
+After=network.target postgresql.service
+Requires=postgresql.service
+
+[Service]
+Type=exec
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/hackersvoca/backend
+Environment=PATH=/var/www/hackersvoca/backend/venv/bin
+EnvironmentFile=/var/www/hackersvoca/backend/.env
+ExecStart=/var/www/hackersvoca/backend/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 4000 --workers 4
+Restart=always
+RestartSec=5
+
+# 보안 설정
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/www/hackersvoca/backend
+
+[Install]
+WantedBy=multi-user.target
