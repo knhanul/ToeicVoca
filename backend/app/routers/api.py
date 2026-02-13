@@ -29,7 +29,69 @@ from ..schemas import (
     VocabOut,
 )
 
+# 사용자 생성을 위한 Pydantic 모델
+from pydantic import BaseModel
+
+class UserCreate(BaseModel):
+    username: str
+    password: str
+
+
+class LoginIn(BaseModel):
+    username: str
+    password: str
+
+class UserOut(BaseModel):
+    id: int
+    username: str
+    created_at: datetime
+
 api_router = APIRouter()
+
+
+@api_router.post("/register", response_model=UserOut)
+def register_user(user_data: UserCreate, db: Session = Depends(get_db)):
+    """새 사용자 등록"""
+    # 중복 사용자 확인
+    existing_user = db.execute(
+        select(User).where(User.username == user_data.username)
+    ).scalar_one_or_none()
+    
+    if existing_user:
+        raise HTTPException(status_code=400, detail="Username already exists")
+    
+    # 비밀번호 해싱 (간단한 구현)
+    from hashlib import sha256
+    password_hash = sha256(user_data.password.encode()).hexdigest()
+    
+    # 사용자 생성
+    new_user = User(
+        username=user_data.username,
+        password_hash=password_hash,
+        current_level="800",  # 기본 레벨
+        remind_window_days=5  # 기본 복습 기간
+    )
+    
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+    
+    return new_user
+
+
+@api_router.post("/login", response_model=UserOut)
+def login_user(payload: LoginIn, db: Session = Depends(get_db)):
+    user = db.execute(select(User).where(User.username == payload.username)).scalar_one_or_none()
+    if user is None:
+        raise HTTPException(status_code=404, detail="user not found")
+
+    from hashlib import sha256
+
+    password_hash = sha256(payload.password.encode()).hexdigest()
+    if user.password_hash != password_hash:
+        raise HTTPException(status_code=401, detail="invalid credentials")
+
+    return user
 
 
 def _vocab_out_with_random_example(db: Session, *, vocab: Vocab) -> VocabOut:
@@ -334,6 +396,10 @@ def get_remind_card(
     # Curriculum Day 기준 최근 7일 윈도우 (날짜 기준 아님)
     REMIND_CURRICULUM_DAYS = 7
     start_day = max(1, current_day - REMIND_CURRICULUM_DAYS + 1)
+    
+    # 오늘 학습 Day 포함: current_day가 open 상태이면 범위에 포함
+    if open_day is not None and int(open_day.day) > current_day:
+        current_day = int(open_day.day)
 
     # recent 7 curriculum days studied vocab ids for this level+cycle
     # - only include vocabs whose latest result is NOT perfect (Perfect가 아닌 모든 결과 대상)

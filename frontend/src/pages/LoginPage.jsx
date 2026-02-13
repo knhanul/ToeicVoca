@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
+const API_BASE = import.meta.env.VITE_API_BASE || "/voca/api";
+
 export default function LoginPage() {
   const [formData, setFormData] = useState({
     username: "",
@@ -16,17 +18,33 @@ export default function LoginPage() {
     setError("");
 
     try {
-      // TODO: 실제 API 연동
-      // 임시 로그인 처리
-      if (formData.username && formData.password) {
-        localStorage.setItem("user", JSON.stringify({
-          id: 1,
-          username: formData.username
-        }));
-        navigate("/dashboard");
-      } else {
-        setError("아이디와 비밀번호를 입력해주세요.");
+      const response = await fetch(`${API_BASE}/login`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          username: formData.username,
+          password: formData.password,
+        }),
+      });
+
+      if (!response.ok) {
+        if (response.status === 404) {
+          setError("사용자가 존재하지 않습니다. 먼저 회원가입을 해주세요.");
+          return;
+        }
+        if (response.status === 401) {
+          setError("아이디 또는 비밀번호가 올바르지 않습니다.");
+          return;
+        }
+        setError("로그인에 실패했습니다.");
+        return;
       }
+
+      const user = await response.json();
+      localStorage.setItem("user", JSON.stringify({ id: user.id, username: user.username }));
+      navigate("/dashboard");
     } catch (err) {
       setError("로그인에 실패했습니다.");
     } finally {

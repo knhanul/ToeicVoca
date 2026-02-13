@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
+const API_BASE = import.meta.env.VITE_API_BASE || "/voca/api";
+
 export default function RegisterPage() {
   const [formData, setFormData] = useState({
     username: "",
@@ -26,19 +28,37 @@ export default function RegisterPage() {
     }
 
     try {
-      // TODO: 실제 API 연동
-      // 임시 회원가입 처리
-      if (formData.username && formData.email && formData.password) {
+      const response = await fetch(`${API_BASE}/register`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          username: formData.username,
+          password: formData.password,
+        }),
+      });
+
+      if (!response.ok) {
+        let detail = "회원가입에 실패했습니다.";
+        try {
+          const data = await response.json();
+          detail = data?.detail || detail;
+        } catch {
+          // ignore
+        }
+        throw new Error(detail);
+      }
+
+      if (response.ok) {
         // 성공 메시지 표시
         setSuccess(true);
         setTimeout(() => {
           navigate("/login");
         }, 2000);
-      } else {
-        setError("모든 필드를 입력해주세요.");
       }
     } catch (err) {
-      setError("회원가입에 실패했습니다.");
+      setError(err?.message || "회원가입에 실패했습니다.");
     } finally {
       setLoading(false);
     }
