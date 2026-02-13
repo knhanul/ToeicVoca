@@ -8,7 +8,7 @@ import RemindPage from "./pages/RemindPage.jsx";
 
 function App() {
   return (
-    <BrowserRouter basename="/voca">
+    <BrowserRouter basename={import.meta.env.BASE_URL}>
       <Routes>
         <Route path="/" element={<LandingPage />} />
         <Route path="/login" element={<LoginPage />} />
