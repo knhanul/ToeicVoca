@@ -83,6 +83,20 @@ class OpenDayOut(BaseModel):
     cycle_no: int
     day: int
     status: str
+    message: str | None = None
+
+
+class StartNextCycleIn(BaseModel):
+    user_id: int
+    difficulty_level: LevelValue
+
+
+class StartNextCycleOut(BaseModel):
+    user_id: int
+    difficulty_level: LevelValue
+    previous_cycle_no: int
+    new_cycle_no: int
+    message: str
 
 
 class CompleteDayIn(BaseModel):
@@ -115,6 +129,7 @@ class ConfirmCycleOut(BaseModel):
 class DayWordCountsOut(BaseModel):
     day: int
     topic: str | None = None
+    cycle_no: int
     unknown_count: int
     unsure_count: int
     perfect_count: int
@@ -126,6 +141,7 @@ class RecentStudyOut(BaseModel):
     difficulty_level: str | None
     vocab_id: int | None = None
     day: int | None
+    topic: str | None = None
     result: ReviewGrade
     word: str | None = None
 

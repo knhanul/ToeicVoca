@@ -3,7 +3,19 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import (
+    select,
+    insert,
+    update,
+    delete,
+    func,
+    and_,
+    or_,
+    text,
+    desc,
+    asc,
+    literal_column,
+)
 from sqlalchemy.orm import Session
 
 from ..db import get_db
@@ -23,6 +35,8 @@ from ..schemas import (
     LevelStatusOut,
     OpenDayIn,
     OpenDayOut,
+    StartNextCycleIn,
+    StartNextCycleOut,
     RecentStudyOut,
     ReviewIn,
     ReviewOut,
@@ -220,6 +234,15 @@ def get_levels_status(user_id: int = Query(...), db: Session = Depends(get_db)):
 
         open_day = _get_open_day(db, user_id=user_id, difficulty_level=level, cycle_no=cycle.cycle_no)
         next_day = _get_next_day(db, user_id=user_id, difficulty_level=level, cycle_no=cycle.cycle_no)
+        
+        # Day 30 완료 확인: completed_days가 30이고 open_day가 없으면 완료
+        is_cycle_completed = int(completed_days) >= 30 and open_day is None
+        
+        # 사이클 완료 상태이면 status 업데이트
+        if is_cycle_completed and cycle.status == "active":
+            cycle.status = "completed_pending_confirm"
+            cycle.completed_at = datetime.utcnow()
+            db.add(cycle)
 
         pct = int((int(completed_days) / 30) * 100)
         levels.append(
@@ -253,11 +276,23 @@ def open_day(payload: OpenDayIn, db: Session = Depends(get_db)):
     if cycle.status != "active":
         raise HTTPException(status_code=400, detail="cycle is not active")
 
+    # 현재 선택된 레벨의 열린 Day만 확인
     existing_open = _get_open_day(
         db, user_id=payload.user_id, difficulty_level=payload.difficulty_level, cycle_no=cycle.cycle_no
     )
-    if existing_open is not None and existing_open.day != payload.day:
-        raise HTTPException(status_code=400, detail="another day is already open")
+    if existing_open is not None:
+        # "오늘 학습 시작" 버튼은 '다음 Day 강제 오픈' 용도이므로,
+        # 현재 Day가 open 상태여도 다음 Day(payload.day)가 요청되면 진행을 허용한다.
+        expected_next_day = int(existing_open.day) + 1
+        if int(payload.day) != expected_next_day:
+            raise HTTPException(
+                status_code=400,
+                detail=f"현재 {payload.difficulty_level}점대 Day {existing_open.day}가 열려 있습니다. 다음 Day({expected_next_day})만 열 수 있습니다.",
+            )
+
+        existing_open.status = "completed"
+        existing_open.completed_at = datetime.utcnow()
+        db.add(existing_open)
 
     row = db.execute(
         select(LevelDayProgress).where(
@@ -276,11 +311,15 @@ def open_day(payload: OpenDayIn, db: Session = Depends(get_db)):
     if row.status == "completed":
         raise HTTPException(status_code=400, detail="day already completed")
 
+    # 다음 Day인지 확인 (선택된 레벨만)
     next_locked = _get_next_day(
         db, user_id=payload.user_id, difficulty_level=payload.difficulty_level, cycle_no=cycle.cycle_no
     )
     if next_locked is None or next_locked.day != payload.day:
-        raise HTTPException(status_code=400, detail="day is not the next available day")
+        raise HTTPException(
+            status_code=400,
+            detail=f"현재 {payload.difficulty_level}점대에서 열 수 있는 다음 Day가 아닙니다.",
+        )
 
     row.status = "open"
     row.opened_at = datetime.utcnow()
@@ -293,6 +332,213 @@ def open_day(payload: OpenDayIn, db: Session = Depends(get_db)):
         cycle_no=cycle.cycle_no,
         day=row.day,
         status=row.status,
+    )
+
+
+@api_router.post("/levels/day/complete", response_model=OpenDayOut)
+def complete_day(payload: OpenDayIn, db: Session = Depends(get_db)):
+    """Day 학습 완료 처리 (Day 30 완료 시 다음 회독 시작)"""
+    user = db.get(User, payload.user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="user not found")
+
+    cycle = _get_or_create_active_cycle(db, user_id=payload.user_id, difficulty_level=payload.difficulty_level)
+    
+    # Day 30 완료 확인
+    if int(payload.day) == 30:
+        # 현재 사이클의 Day 30이 완료되었는지 확인
+        completed_days = db.execute(
+            select(func.count(LevelDayProgress.id)).where(
+                and_(
+                    LevelDayProgress.user_id == payload.user_id,
+                    LevelDayProgress.difficulty_level == payload.difficulty_level,
+                    LevelDayProgress.cycle_no == cycle.cycle_no,
+                    LevelDayProgress.status == "completed",
+                )
+            )
+        ).scalar_one()
+        
+        # Day 30이 완료되었고, 현재 사이클이 active 상태인 경우에만 다음 회독 시작
+        # 이미 completed_pending_confirm 상태이면 다음 회독이 시작된 것이므로 건너뛰기
+        if int(completed_days) >= 30 and cycle.status == "active":
+            # 현재 사이클 완료 처리
+            cycle.status = "completed_pending_confirm"
+            cycle.completed_at = datetime.utcnow()
+            db.add(cycle)
+            
+            # 새로운 사이클 생성
+            new_cycle_no = cycle.cycle_no + 1
+            new_cycle = LevelCycle(
+                user_id=payload.user_id,
+                difficulty_level=payload.difficulty_level,
+                cycle_no=new_cycle_no,
+                status="active"
+            )
+            db.add(new_cycle)
+            
+            # 새로운 사이클의 Day 1 생성
+            _ensure_day_rows(db, user_id=payload.user_id, difficulty_level=payload.difficulty_level, cycle_no=new_cycle_no)
+            
+            # 새로운 사이클의 Day 1 열기
+            new_day1 = db.execute(
+                select(LevelDayProgress).where(
+                    and_(
+                        LevelDayProgress.user_id == payload.user_id,
+                        LevelDayProgress.difficulty_level == payload.difficulty_level,
+                        LevelDayProgress.cycle_no == new_cycle_no,
+                        LevelDayProgress.day == 1,
+                    )
+                )
+            ).scalar_one()
+            
+            new_day1.status = "open"
+            new_day1.opened_at = datetime.utcnow()
+            db.add(new_day1)
+            
+            db.commit()
+            
+            return OpenDayOut(
+                user_id=payload.user_id,
+                difficulty_level=payload.difficulty_level,
+                cycle_no=new_cycle_no,
+                day=1,
+                status="open",
+                message=f"🎉 축하합니다! {payload.difficulty_level}점대 {cycle.cycle_no}회독을 완료했습니다. {new_cycle_no}회독 Day 1이 시작되었습니다."
+            )
+        
+        # 이미 완료된 사이클이면 새로운 사이클 찾기
+        if cycle.status == "completed_pending_confirm":
+            # 새로운 사이클 찾기
+            new_cycle = db.execute(
+                select(LevelCycle).where(
+                    and_(
+                        LevelCycle.user_id == payload.user_id,
+                        LevelCycle.difficulty_level == payload.difficulty_level,
+                        LevelCycle.status == "active",
+                    )
+                ).order_by(LevelCycle.cycle_no.desc()).limit(1)
+            ).scalar_one_or_none()
+            
+            if new_cycle:
+                # 새로운 사이클의 Day 1이 열려있는지 확인
+                new_day1 = db.execute(
+                    select(LevelDayProgress).where(
+                        and_(
+                            LevelDayProgress.user_id == payload.user_id,
+                            LevelDayProgress.difficulty_level == payload.difficulty_level,
+                            LevelDayProgress.cycle_no == new_cycle.cycle_no,
+                            LevelDayProgress.day == 1,
+                        )
+                    )
+                ).scalar_one_or_none()
+                
+                if new_day1 and new_day1.status == "open":
+                    return OpenDayOut(
+                        user_id=payload.user_id,
+                        difficulty_level=payload.difficulty_level,
+                        cycle_no=new_cycle.cycle_no,
+                        day=1,
+                        status="open",
+                        message=f"이미 {new_cycle.cycle_no}회독이 진행 중입니다. Day 1부터 학습을 계속하세요."
+                    )
+                else:
+                    # Day 1이 없거나 열려있지 않으면 열기
+                    if new_day1:
+                        new_day1.status = "open"
+                        new_day1.opened_at = datetime.utcnow()
+                        db.add(new_day1)
+                    else:
+                        # Day 1 생성
+                        _ensure_day_rows(db, user_id=payload.user_id, difficulty_level=payload.difficulty_level, cycle_no=new_cycle.cycle_no)
+                        new_day1 = db.execute(
+                            select(LevelDayProgress).where(
+                                and_(
+                                    LevelDayProgress.user_id == payload.user_id,
+                                    LevelDayProgress.difficulty_level == payload.difficulty_level,
+                                    LevelDayProgress.cycle_no == new_cycle.cycle_no,
+                                    LevelDayProgress.day == 1,
+                                )
+                            )
+                        ).scalar_one()
+                        new_day1.status = "open"
+                        new_day1.opened_at = datetime.utcnow()
+                        db.add(new_day1)
+                    
+                    db.commit()
+                    
+                    return OpenDayOut(
+                        user_id=payload.user_id,
+                        difficulty_level=payload.difficulty_level,
+                        cycle_no=new_cycle.cycle_no,
+                        day=1,
+                        status="open",
+                        message=f"{new_cycle.cycle_no}회독 Day 1이 시작되었습니다. 학습을 계속하세요."
+                    )
+            
+            # 새로운 사이클이 없으면 생성
+            new_cycle_no = cycle.cycle_no + 1
+            new_cycle = LevelCycle(
+                user_id=payload.user_id,
+                difficulty_level=payload.difficulty_level,
+                cycle_no=new_cycle_no,
+                status="active"
+            )
+            db.add(new_cycle)
+            
+            # 새로운 사이클의 Day 1 생성
+            _ensure_day_rows(db, user_id=payload.user_id, difficulty_level=payload.difficulty_level, cycle_no=new_cycle_no)
+            
+            # 새로운 사이클의 Day 1 열기
+            new_day1 = db.execute(
+                select(LevelDayProgress).where(
+                    and_(
+                        LevelDayProgress.user_id == payload.user_id,
+                        LevelDayProgress.difficulty_level == payload.difficulty_level,
+                        LevelDayProgress.cycle_no == new_cycle_no,
+                        LevelDayProgress.day == 1,
+                    )
+                )
+            ).scalar_one()
+            
+            new_day1.status = "open"
+            new_day1.opened_at = datetime.utcnow()
+            db.add(new_day1)
+            
+            db.commit()
+            
+            return OpenDayOut(
+                user_id=payload.user_id,
+                difficulty_level=payload.difficulty_level,
+                cycle_no=new_cycle_no,
+                day=1,
+                status="open",
+                message=f"새로운 {new_cycle_no}회독 Day 1이 시작되었습니다."
+            )
+    
+    # Day 30이 아니면 일반 완료 처리
+    day_progress = db.execute(
+        select(LevelDayProgress).where(
+            and_(
+                LevelDayProgress.user_id == payload.user_id,
+                LevelDayProgress.difficulty_level == payload.difficulty_level,
+                LevelDayProgress.cycle_no == cycle.cycle_no,
+                LevelDayProgress.day == payload.day,
+            )
+        )
+    ).scalar_one_or_none()
+    
+    if day_progress:
+        day_progress.status = "completed"
+        day_progress.completed_at = datetime.utcnow()
+        db.add(day_progress)
+        db.commit()
+    
+    return OpenDayOut(
+        user_id=payload.user_id,
+        difficulty_level=payload.difficulty_level,
+        cycle_no=cycle.cycle_no,
+        day=payload.day,
+        status="completed",
     )
 
 
@@ -359,7 +605,76 @@ def get_today_card(
     )
     vocab = db.execute(vocab_stmt).scalar_one_or_none()
     if vocab is None:
-        raise HTTPException(status_code=404, detail="no cards")
+        # 현재 Day의 모든 단어를 학습했는지 확인
+        current_day_completed = db.execute(
+            text("""
+                SELECT COUNT(*) = COUNT(up.vocab_id)
+                FROM vocab v
+                LEFT JOIN user_progress up ON v.id = up.vocab_id AND up.user_id = :user_id AND up.cycle_no = :cycle_no
+                WHERE v.difficulty_level = :difficulty_level AND v.day = :current_day
+            """),
+            {"user_id": user_id, "cycle_no": cycle.cycle_no, "difficulty_level": difficulty_level, "current_day": open_day.day}
+        ).scalar()
+        
+        if current_day_completed:
+            # 현재 Day 완료 처리
+            db.execute(
+                text("""
+                    UPDATE level_day_progress 
+                    SET status = 'completed', completed_at = NOW()
+                    WHERE user_id = :user_id AND difficulty_level = :difficulty_level AND cycle_no = :cycle_no AND day = :current_day
+                """),
+                {"user_id": user_id, "difficulty_level": difficulty_level, "cycle_no": cycle.cycle_no, "current_day": open_day.day}
+            )
+            
+            # Day 30 완료 확인
+            if open_day.day >= 30:
+                # 사이클 완료 처리
+                cycle.status = "completed_pending_confirm"
+                cycle.completed_at = datetime.utcnow()
+                db.add(cycle)
+                db.commit()
+                
+                # 404 에러 대신 명확한 메시지 반환
+                raise HTTPException(
+                    status_code=404, 
+                    detail=f"🎉 {difficulty_level}점대 {cycle.cycle_no}회독을 완료했습니다! 다음 회독을 시작해주세요."
+                )
+            
+            # 다음 Day 열기
+            if open_day.day < 30:  # 최대 Day 수
+                next_day = open_day.day + 1
+                db.execute(
+                    text("""
+                        UPDATE level_day_progress 
+                        SET status = 'open', opened_at = NOW()
+                        WHERE user_id = :user_id AND difficulty_level = :difficulty_level AND cycle_no = :cycle_no AND day = :next_day
+                    """),
+                    {"user_id": user_id, "difficulty_level": difficulty_level, "cycle_no": cycle.cycle_no, "next_day": next_day}
+                )
+                db.commit()
+                
+                # 다음 Day의 단어 다시 시도
+                vocab_stmt = (
+                    select(Vocab)
+                    .where(and_(Vocab.difficulty_level == difficulty_level, Vocab.day == next_day))
+                    .where(
+                        ~Vocab.id.in_(
+                            select(UserProgress.vocab_id).where(
+                                and_(UserProgress.user_id == user_id, UserProgress.cycle_no == cycle.cycle_no)
+                            )
+                        )
+                    )
+                    .order_by(Vocab.id.asc())
+                    .limit(1)
+                )
+                vocab = db.execute(vocab_stmt).scalar_one_or_none()
+                if vocab is None:
+                    raise HTTPException(status_code=404, detail="no cards available in next day")
+            else:
+                raise HTTPException(status_code=404, detail="all days completed")
+        else:
+            raise HTTPException(status_code=404, detail="no cards")
 
     return CardOut(vocab=_vocab_out_with_random_example(db, vocab=vocab))
 
@@ -401,65 +716,109 @@ def get_remind_card(
     if open_day is not None and int(open_day.day) > current_day:
         current_day = int(open_day.day)
 
-    # recent 7 curriculum days studied vocab ids for this level+cycle
-    # - only include vocabs whose latest result is NOT perfect (Perfect가 아닌 모든 결과 대상)
-    latest_ts_subq = (
-        select(StudyLog.vocab_id.label("vocab_id"), func.max(StudyLog.studied_at).label("max_ts"))
-        .join(Vocab, Vocab.id == StudyLog.vocab_id)
+    # 현재 회독과 이전 회독의 최근 7일 Day 범위 계산
+    all_cycle_ranges = []
+    
+    # 현재 회독 추가
+    if current_day >= start_day:
+        all_cycle_ranges.append({
+            'cycle_no': cycle.cycle_no,
+            'start_day': start_day,
+            'end_day': current_day
+        })
+    
+    # 이전 회독들의 최근 7일 추가 (현재 회독이 2회독 이상일 때)
+    if cycle.cycle_no > 1:
+        # 이전 회독의 마지막 학습 Day 찾기
+        for prev_cycle_no in range(cycle.cycle_no - 1, 0, -1):
+            prev_cycle_last_day = db.execute(
+                select(func.max(LevelDayProgress.day)).where(
+                    and_(
+                        LevelDayProgress.user_id == user_id,
+                        LevelDayProgress.difficulty_level == difficulty_level,
+                        LevelDayProgress.cycle_no == prev_cycle_no,
+                        LevelDayProgress.status == "completed",
+                    )
+                )
+            ).scalar_one() or 0
+            
+            if prev_cycle_last_day > 0:
+                prev_start_day = max(1, prev_cycle_last_day - REMIND_CURRICULUM_DAYS + 1)
+                all_cycle_ranges.append({
+                    'cycle_no': prev_cycle_no,
+                    'start_day': prev_start_day,
+                    'end_day': prev_cycle_last_day
+                })
+                
+                # 최근 2개 회독만 포함하도록 제한
+                if len(all_cycle_ranges) >= 2:
+                    break
+
+    if not all_cycle_ranges:
+        raise HTTPException(status_code=404, detail="no remind cards")
+
+    day_range_conditions = []
+    for range_info in all_cycle_ranges:
+        day_range_conditions.append(
+            and_(
+                Vocab.day >= range_info["start_day"],
+                Vocab.day <= range_info["end_day"],
+            )
+        )
+    combined_day_range_condition = or_(*day_range_conditions)
+
+    # 1. 최근 7일(커리큘럼 Day) 범위에 속한 vocab_id 집합 구하기
+    vocab_ids_in_window_stmt = (
+        select(Vocab.id)
+        .where(
+            and_(
+                Vocab.difficulty_level == difficulty_level,
+                combined_day_range_condition,
+            )
+        )
+    )
+
+    vocab_ids_in_window = {row[0] for row in db.execute(vocab_ids_in_window_stmt).fetchall()}
+    if not vocab_ids_in_window:
+        raise HTTPException(status_code=404, detail="no remind cards")
+
+    # 2. 그 vocab들에 대해 최신 StudyLog 구하기 (StudyLog.id 기준)
+    latest_logs_subq = (
+        select(
+            StudyLog.vocab_id.label("vocab_id"),
+            StudyLog.result.label("result"),
+            func.row_number()
+            .over(partition_by=StudyLog.vocab_id, order_by=StudyLog.id.desc())
+            .label("rn"),
+        )
         .where(
             and_(
                 StudyLog.user_id == user_id,
-                StudyLog.cycle_no == cycle.cycle_no,
                 StudyLog.difficulty_level == difficulty_level,
-                Vocab.day.is_not(None),
-                Vocab.day >= start_day,
-                Vocab.day <= current_day,
+                StudyLog.vocab_id.in_(vocab_ids_in_window),
             )
         )
-        .group_by(StudyLog.vocab_id)
         .subquery()
     )
 
-    recent_vocab_ids_stmt = (
-        select(StudyLog.vocab_id)
-        .join(
-            latest_ts_subq,
-            and_(StudyLog.vocab_id == latest_ts_subq.c.vocab_id, StudyLog.studied_at == latest_ts_subq.c.max_ts),
-        )
+    # 3. 최신 결과가 again/good인 vocab만 최종 후보로 선택
+    remind_vocab_stmt = (
+        select(Vocab)
+        .join(latest_logs_subq, latest_logs_subq.c.vocab_id == Vocab.id)
         .where(
             and_(
-                StudyLog.user_id == user_id,
-                StudyLog.cycle_no == cycle.cycle_no,
-                StudyLog.difficulty_level == difficulty_level,
-                StudyLog.result != "perfect",  # Perfect가 아닌 모든 결과 대상
-            )
-        )
-    )
-
-    # Prefer non-mastered or wrong_count>0
-    today = date.today()
-    due_stmt = (
-        select(UserProgress, Vocab)
-        .join(Vocab, UserProgress.vocab_id == Vocab.id)
-        .where(
-            and_(
-                UserProgress.user_id == user_id,
-                UserProgress.cycle_no == cycle.cycle_no,
-                Vocab.id.in_(recent_vocab_ids_stmt),
                 Vocab.difficulty_level == difficulty_level,
-                or_(
-                    UserProgress.next_review_date.is_(None),
-                    UserProgress.next_review_date <= today,
-                    UserProgress.wrong_count > 0,
-                ),
+                latest_logs_subq.c.rn == 1,
+                latest_logs_subq.c.result.in_(["again", "good"]),
             )
         )
-        .order_by(UserProgress.wrong_count.desc(), UserProgress.next_review_date.asc().nullsfirst())
+        .order_by(func.random())
         .limit(1)
     )
-    row = db.execute(due_stmt).first()
-    if row:
-        progress, vocab = row
+
+    vocab = db.execute(remind_vocab_stmt).scalar_one_or_none()
+    
+    if vocab:
         return CardOut(
             vocab=_vocab_out_with_random_example(db, vocab=vocab),
             leitner_level=None,      # 리마인드는 처음 보는 것처럼 동작
@@ -707,6 +1066,63 @@ def submit_review(payload: ReviewIn, db: Session = Depends(get_db)):
     )
 
 
+@api_router.post("/review/remind", response_model=ReviewOut)
+def submit_remind_review(payload: ReviewIn, db: Session = Depends(get_db)):
+    user = db.get(User, payload.user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="user not found")
+
+    vocab = db.get(Vocab, payload.vocab_id)
+    if vocab is None:
+        raise HTTPException(status_code=404, detail="vocab not found")
+
+    today = date.today()
+    now = datetime.utcnow()
+
+    # 리마인드는 기존 StudyLog의 cycle_no를 유지하고 새로운 회차를 만들지 않음
+    # 가장 최근 StudyLog의 cycle_no를 찾아서 사용
+    latest_cycle = db.execute(
+        select(StudyLog.cycle_no)
+        .where(
+            and_(
+                StudyLog.user_id == payload.user_id,
+                StudyLog.vocab_id == payload.vocab_id,
+                StudyLog.difficulty_level == vocab.difficulty_level,
+            )
+        )
+        .order_by(StudyLog.studied_at.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    
+    cycle_no = latest_cycle if latest_cycle is not None else 1
+
+    # UserProgress는 업데이트하지 않음 (리마인드는 복습이므로)
+    # StudyLog만 추가하여 결과와 시간 기록
+    db.add(
+        StudyLog(
+            user_id=payload.user_id,
+            vocab_id=payload.vocab_id,
+            difficulty_level=vocab.difficulty_level,
+            cycle_no=cycle_no,
+            result=payload.grade,
+            studied_at=now,
+        )
+    )
+
+    db.commit()
+
+    # 리마인드는 Leitner 정보를 반환하지 않음 (복습이므로)
+    return ReviewOut(
+        user_id=payload.user_id,
+        vocab_id=payload.vocab_id,
+        grade=payload.grade,
+        leitner_level=None,
+        next_review_date=None,
+        is_mastered=None,
+        studied_at=now,
+    )
+
+
 @api_router.post("/levels/day/complete", response_model=CompleteDayOut)
 def complete_day(payload: CompleteDayIn, db: Session = Depends(get_db)):
     user = db.get(User, payload.user_id)
@@ -814,10 +1230,8 @@ def confirm_cycle(payload: ConfirmCycleIn, db: Session = Depends(get_db)):
 
 @api_router.get("/stats/levels", response_model=LevelsStatsOut)
 def get_levels_stats(user_id: int = Query(...), db: Session = Depends(get_db)):
-    print(f"=== API CALLED: get_levels_stats with user_id={user_id} ===")  # 이 줄 추가
     user = db.get(User, user_id)
     if user is None:
-        print(f"User not found: {user_id}")  # 이 줄 추가
         raise HTTPException(status_code=404, detail="user not found")
 
     levels_out: list[LevelStatsOut] = []
@@ -873,47 +1287,79 @@ def get_levels_stats(user_id: int = Query(...), db: Session = Depends(get_db)):
         if int(total_vocab) > 0:
             memorization_pct = int((int(perfect_vocab) / int(total_vocab)) * 100)
 
-        # Day별(모름/애매/완료) 집계: 해당 레벨에서 진행한 day(status open/completed)에 대해서만
-        progressed_days = db.execute(
+        # 진행한 Day별 현황 (전 회독 포함)
+        # 모든 회독의 완료된 Day를 가져옴
+        all_progressed_days = db.execute(
             select(LevelDayProgress.day)
             .where(
                 and_(
                     LevelDayProgress.user_id == user_id,
                     LevelDayProgress.difficulty_level == level,
-                    LevelDayProgress.cycle_no == cycle.cycle_no,
-                    LevelDayProgress.status.in_(["open", "completed"]),
+                    LevelDayProgress.status == "completed",
                 )
             )
-            .order_by(LevelDayProgress.day.asc())
+            .distinct()
         ).scalars().all()
 
-        # Latest result per vocab, joined to vocab for day
-        day_result_rows = db.execute(
-            select(Vocab.day, latest_logs_subq.c.result, func.count())
-            .join(latest_logs_subq, latest_logs_subq.c.vocab_id == Vocab.id)
-            .where(and_(Vocab.difficulty_level == level, Vocab.day.is_not(None)))
-            .group_by(Vocab.day, latest_logs_subq.c.result)
-        ).all()
-
-        counts_by_day: dict[int, dict[str, int]] = {}
-        for d, r, cnt in day_result_rows:
-            if d is None:
-                continue
-            counts_by_day.setdefault(int(d), {})[str(r)] = int(cnt)
-
+        # 각 Day별로 최신 회독 정보와 결과 집계
         day_word_counts: list[DayWordCountsOut] = []
-        for d in progressed_days:
+        for d in all_progressed_days:
             d_int = int(d)
             total_day_vocab = db.execute(
                 select(func.count(Vocab.id)).where(and_(Vocab.difficulty_level == level, Vocab.day == d_int))
             ).scalar_one()
-            result_counts = counts_by_day.get(d_int, {})
+            
+            # Day별 Topic 정보 가져오기
+            topic = db.execute(
+                select(Vocab.topic)
+                .where(and_(Vocab.difficulty_level == level, Vocab.day == d_int))
+                .limit(1)
+            ).scalar_one_or_none()
+            
+            # 해당 Day를 가장 최근에 학습한 회차(cycle_no)와 결과 집계
+            latest_cycle_for_day = db.execute(
+                select(StudyLog.cycle_no, func.max(StudyLog.studied_at).label("max_ts"))
+                .where(
+                    and_(
+                        StudyLog.user_id == user_id,
+                        StudyLog.difficulty_level == level,
+                        Vocab.day == d_int,
+                    )
+                )
+                .join(Vocab, Vocab.id == StudyLog.vocab_id)
+                .group_by(StudyLog.cycle_no)
+                .order_by(func.max(StudyLog.studied_at).desc())
+                .limit(1)
+            ).first()
+            
+            cycle_no = latest_cycle_for_day[0] if latest_cycle_for_day else cycle.cycle_no
+            
+            # 해당 Day와 회차의 결과 집계
+            day_result_rows = db.execute(
+                select(Vocab.day, StudyLog.result, func.count(StudyLog.id).label("cnt"))
+                .join(StudyLog, StudyLog.vocab_id == Vocab.id)
+                .where(
+                    and_(
+                        Vocab.difficulty_level == level,
+                        Vocab.day == d_int,
+                        StudyLog.user_id == user_id,
+                        StudyLog.difficulty_level == level,
+                        StudyLog.cycle_no == cycle_no,
+                    )
+                )
+                .group_by(Vocab.day, StudyLog.result)
+            ).all()
+            
+            result_counts = {str(r): int(cnt) for _, r, cnt in day_result_rows}
             unknown = int(result_counts.get("again", 0))
             unsure = int(result_counts.get("good", 0))
             perfect = int(result_counts.get("perfect", 0))
+            
             day_word_counts.append(
                 DayWordCountsOut(
                     day=d_int,
+                    topic=topic,
+                    cycle_no=cycle_no,
                     unknown_count=unknown,
                     unsure_count=unsure,
                     perfect_count=perfect,
@@ -928,6 +1374,7 @@ def get_levels_stats(user_id: int = Query(...), db: Session = Depends(get_db)):
                 StudyLog.difficulty_level,
                 StudyLog.vocab_id,
                 Vocab.day,
+                Vocab.topic,
                 StudyLog.result,
                 Vocab.word,
             )
@@ -946,13 +1393,14 @@ def get_levels_stats(user_id: int = Query(...), db: Session = Depends(get_db)):
 
         # word가 None이면 기본값 제공 (LEFT JOIN으로 이미 가져왔으므로 추가 쿼리 불필요)
         recent_study: list[RecentStudyOut] = []
-        for (ts, dl, vocab_id, day, res, word) in recent_rows:
+        for (ts, dl, vocab_id, day, topic, res, word) in recent_rows:
             recent_study.append(
                 RecentStudyOut(
                     studied_at=ts,
                     difficulty_level=dl,
                     vocab_id=vocab_id,
                     day=day,
+                    topic=topic,
                     result=res,
                     word=str(word) if word is not None else f"Day{day}단어",
                 )

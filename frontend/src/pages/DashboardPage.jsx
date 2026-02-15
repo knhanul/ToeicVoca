@@ -10,6 +10,7 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
   const [expandedLevel, setExpandedLevel] = useState(null);
+  const [activeTab, setActiveTab] = useState("dayProgress");
   const navigate = useNavigate();
 
   const levels = useMemo(
@@ -250,76 +251,111 @@ export default function DashboardPage() {
                       {detailLoading ? (
                         <div style={{ fontSize: 13, color: "#666" }}>불러오는 중...</div>
                       ) : detail ? (
-                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                          <div style={{ border: "1px solid #f1f1f1", borderRadius: 10, padding: 12 }}>
-                            <div style={{ fontWeight: 700, marginBottom: 8, color: "#333" }}>진행한 Day별 현황</div>
-                            {detail.day_word_counts?.length ? (
-                              <div style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 13, color: "#444" }}>
-                                {detail.day_word_counts.map((d) => (
-                                  <div key={d.day} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                                    <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "baseline" }}>
-                                      <div style={{ fontWeight: 600 }}>Day {d.day}</div>
-                                      <div style={{ color: "#666" }}>
-                                        모름 {d.unknown_count} / 애매 {d.unsure_count} / 완료 {d.perfect_count} (총 {d.total_count})
-                                      </div>
-                                    </div>
-                                    {d.topic ? (
-                                      <div style={{ fontSize: 12, color: "#888", fontStyle: "italic", paddingLeft: 8 }}>
-                                        📖 {d.topic}
-                                      </div>
-                                    ) : null}
-                                  </div>
-                                ))}
-                              </div>
-                            ) : (
-                              <div style={{ fontSize: 13, color: "#666" }}>아직 진행한 Day가 없습니다.</div>
-                            )}
+                        <div>
+                          {/* 탭 버튼 */}
+                          <div className="flex border-b border-gray-300 mb-3">
+                            <button
+                              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                                activeTab === "dayProgress"
+                                  ? "border-blue-500 text-blue-600"
+                                  : "border-transparent text-gray-500 hover:text-gray-700"
+                              }`}
+                              onClick={() => setActiveTab("dayProgress")}
+                            >
+                              진행한 Day별 현황
+                            </button>
+                            <button
+                              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                                activeTab === "recentStudy"
+                                  ? "border-blue-500 text-blue-600"
+                                  : "border-transparent text-gray-500 hover:text-gray-700"
+                              }`}
+                              onClick={() => setActiveTab("recentStudy")}
+                            >
+                              최근 학습
+                            </button>
                           </div>
 
-                          <div style={{ border: "1px solid #f1f1f1", borderRadius: 10, padding: 12 }}>
-                            <div style={{ fontWeight: 700, marginBottom: 8, color: "#333" }}>최근 학습</div>
-                            {detail.recent_study?.length ? (
-                              <div style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 13, color: "#444" }}>
-                                {detail.recent_study.slice(0, 8).map((r, idx) => (
-                                  <div
-                                    key={`${r.studied_at}-${idx}`}
-                                    style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "baseline" }}
-                                  >
-                                    <div
-                                      style={{
-                                        display: "flex",
-                                        gap: 10,
-                                        alignItems: "baseline",
-                                        width: "100%",
-                                        justifyContent: "space-between",
-                                      }}
-                                    >
-                                      <div style={{ color: "#666", fontSize: 12, whiteSpace: "nowrap" }}>
-                                        {new Date(r.studied_at).toLocaleString()}
-                                      </div>
-                                      <div
-                                        style={{
-                                          fontWeight: 600,
-                                          color: "#333",
-                                          flex: 1,
-                                          textAlign: "center",
-                                          overflow: "hidden",
-                                          textOverflow: "ellipsis",
-                                          whiteSpace: "nowrap",
-                                        }}
-                                        title={r.word || ""}
-                                      >
-                                        {r.word || `Day ${r.day || "?"}`}
-                                      </div>
-                                      <div style={{ color: "#666", fontSize: 12, whiteSpace: "nowrap" }}>{r.result}</div>
-                                    </div>
-                                  </div>
-                                ))}
+                          {/* 탭 내용 */}
+                          {activeTab === "dayProgress" && (
+                            <div className="border border-gray-300 rounded-xl shadow-sm overflow-hidden">
+                              <div className="bg-blue-50 px-3 py-2 border-b border-gray-300">
+                                <div className="font-bold text-gray-800 text-sm">진행한 Day별 현황</div>
                               </div>
-                            ) : (
-                              <div style={{ fontSize: 13, color: "#666" }}>학습 기록이 없습니다.</div>
-                            )}
-                          </div>
+                              <div className="p-3">
+                                {detail.day_word_counts?.length ? (
+                                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2">
+                                    {detail.day_word_counts
+                                      .slice()
+                                      .sort((a, b) => b.day - a.day)
+                                      .map((d) => (
+                                        <div
+                                          key={d.day}
+                                          className="border border-gray-200 rounded-lg px-3 py-2 bg-white"
+                                        >
+                                          <div className="text-xs font-semibold text-gray-800 whitespace-nowrap overflow-hidden text-ellipsis">
+                                            Day {d.day}
+                                            {d.topic && (
+                                              <span className="text-[10px] text-gray-500 font-normal ml-1">
+                                                - {d.topic}
+                                              </span>
+                                            )}
+                                            <span className="text-[10px] text-blue-600 font-normal ml-1">
+                                              ({d.cycle_no}회독)
+                                            </span>
+                                            <span className="text-[10px] text-gray-600 ml-2">
+                                              모름 {d.unknown_count} / 애매 {d.unsure_count} / 완료 {d.perfect_count} (총 {d.total_count})
+                                            </span>
+                                          </div>
+                                        </div>
+                                      ))}
+                                  </div>
+                                ) : (
+                                  <div className="text-xs text-gray-500">아직 진행한 Day가 없습니다.</div>
+                                )}
+                              </div>
+                            </div>
+                          )}
+
+                          {activeTab === "recentStudy" && (
+                            <div className="border border-gray-300 rounded-xl shadow-sm overflow-hidden">
+                              <div className="bg-green-50 px-3 py-2 border-b border-gray-300">
+                                <div className="font-bold text-gray-800 text-sm">최근 학습</div>
+                              </div>
+                              <div className="p-3">
+                                {detail.recent_study?.length ? (
+                                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                                    {detail.recent_study.map((r, idx) => (
+                                      <div
+                                        key={`${r.studied_at}-${idx}`}
+                                        className="border border-gray-200 rounded-lg px-3 py-2 bg-white"
+                                      >
+                                        <div className="text-xs text-gray-600 whitespace-nowrap overflow-hidden text-ellipsis">
+                                          {new Date(r.studied_at).toLocaleString()}
+                                          <span className="font-semibold text-gray-800 ml-2">
+                                            {r.word || `Day ${r.day || "?"}`}
+                                            {r.day && (
+                                              <span className="text-[10px] text-gray-500 font-normal ml-1">
+                                                Day {r.day}
+                                              </span>
+                                            )}
+                                            {r.topic && (
+                                              <span className="text-[10px] text-gray-400 font-normal ml-1">
+                                                - {r.topic}
+                                              </span>
+                                            )}
+                                          </span>
+                                          <span className="text-[10px] text-gray-600 ml-2">{r.result}</span>
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <div className="text-xs text-gray-500">학습 기록이 없습니다.</div>
+                                )}
+                              </div>
+                            </div>
+                          )}
                         </div>
                       ) : null}
                     </div>
@@ -407,26 +443,71 @@ export default function DashboardPage() {
                   alert("레벨 상태를 불러올 수 없습니다.");
                   return;
                 }
-                if (level.open_day) {
-                  alert(`이미 Day ${level.open_day}가 열려 있습니다. 학습하기를 이용해주세요.`);
+                // 다음 Day 계산 (open_day가 있으면 +1, 없으면 next_day)
+                const nextDay = level.open_day ? level.open_day + 1 : level.next_day;
+                
+                // 사이클 완료 확인
+                if (!nextDay && !level.open_day && level.cycle_status === "completed_pending_confirm") {
+                  const ok = window.confirm("🎉 30일 학습을 모두 완료했습니다! 다음 회독을 시작하시겠습니까?");
+                  if (!ok) return;
+                  
+                  // Day 30 완료 처리 API 호출
+                  const completeR = await fetch(`${API_BASE}/levels/day/complete`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ user_id: 1, difficulty_level: selectedLevel, day: 30 }),
+                  });
+                  
+                  if (!completeR.ok) {
+                    const data = await completeR.json().catch(() => ({}));
+                    if (data.detail && data.detail.includes("이미")) {
+                      alert(data.detail);
+                      // 이미 회독이 진행 중이면 상태 새로고침
+                      loadStats();
+                      loadDetailStats(selectedLevel);
+                      return;
+                    }
+                    throw new Error(data.detail || "failed to complete day 30");
+                  }
+                  
+                  const completeData = await completeR.json();
+                  if (completeData.message) {
+                    alert(completeData.message);
+                  }
+                  
+                  // 새로운 사이클이 시작되면 페이지 리로드
+                  if (completeData.cycle_no > 1) {
+                    window.location.reload();
+                    return;
+                  }
+                }
+                
+                if (!nextDay) {
+                  alert("학습을 진행할 수 없는 상태입니다. 대시보드를 확인해주세요.");
                   return;
                 }
-                if (!level.next_day) {
-                  alert("30일 학습이 모두 완료되었습니다. 회독 완료 확인이 필요합니다.");
-                  return;
-                }
-                const ok = window.confirm(`오늘은 Day ${level.next_day} 학습을 시작할까요?`);
+                const ok = window.confirm(`다음 Day ${nextDay} 학습을 시작할까요?\n${level.open_day ? `현재 Day ${level.open_day}를 완료하고 다음 Day로 진행합니다.` : ''}`);
                 if (!ok) return;
                 const openR = await fetch(`${API_BASE}/levels/day/open`, {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ user_id: 1, difficulty_level: selectedLevel, day: level.next_day }),
+                  body: JSON.stringify({ user_id: 1, difficulty_level: selectedLevel, day: nextDay }),
                 });
                 if (!openR.ok) {
                   const data = await openR.json().catch(() => ({}));
                   throw new Error(data.detail || "failed to open day");
                 }
-                alert(`Day ${level.next_day}를 열었습니다. 학습하기로 이동합니다.`);
+                const openData = await openR.json();
+                if (openData.message) {
+                  alert(openData.message);
+                  // 새로운 사이클이 시작되면 대시보드 새로고침
+                  if (openData.cycle_no > 1) {
+                    loadStats();
+                    loadDetailStats(selectedLevel);
+                  }
+                } else {
+                  alert(`Day ${nextDay}를 열었습니다. 학습하기로 이동합니다.`);
+                }
                 navigate(`/study?difficulty_level=${encodeURIComponent(selectedLevel)}`);
               } catch (e) {
                 alert(e.message);
@@ -453,9 +534,9 @@ export default function DashboardPage() {
             }}
           >
             <div style={{ fontSize: 48, marginBottom: 16 }}></div>
-            <div style={{ fontSize: 20, fontWeight: 700, marginBottom: 8 }}>오늘 학습 시작</div>
+            <div style={{ fontSize: 20, fontWeight: 700, marginBottom: 8 }}>다음 학습 시작</div>
             <div style={{ fontSize: 14, color: "#666" }}>
-              선택 레벨의 다음 Day를 바로 시작
+              현재 레벨의 다음 Day를 바로 시작
             </div>
           </button>
         </div>

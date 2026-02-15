@@ -81,8 +81,37 @@ export default function StudyPage() {
       return { ...level, open_day: level.open_day };
     }
 
-    if (!level.next_day) {
-      throw new Error("30일 학습이 모두 완료되었습니다. (회독 완료 확인이 필요합니다)");
+    if (!level.next_day && !level.open_day) {
+      // 사이클 완료 확인
+      if (level.cycle_status === "completed_pending_confirm") {
+        const ok = window.confirm("🎉 30일 학습을 모두 완료했습니다! 다음 회독을 시작하시겠습니까?");
+        if (!ok) {
+          throw new Error("회독 완료를 나중에 확인할 수 있습니다. 대시보드로 돌아가세요.");
+        }
+        
+        // Day 30 완료 처리 API 호출
+        const completeR = await fetch(`${API_BASE}/levels/day/complete`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ user_id: userId, difficulty_level: selectedLevel, day: 30 }),
+        });
+        
+        if (!completeR.ok) {
+          const data = await completeR.json().catch(() => ({}));
+          throw new Error(data.detail || "failed to complete day 30");
+        }
+        
+        const completeData = await completeR.json();
+        if (completeData.message) {
+          alert(completeData.message);
+        }
+        
+        // 새로운 사이클로 페이지 리로드
+        window.location.reload();
+        return;
+      } else {
+        throw new Error("학습을 진행할 수 없는 상태입니다. 대시보드를 확인해주세요.");
+      }
     }
 
     const ok = window.confirm(`오늘은 Day ${level.next_day} 학습을 시작할까요?`);
@@ -126,15 +155,74 @@ export default function StudyPage() {
     (async () => {
       const level = await ensureOpenDay();
       if (!level.open_day) {
+        // open_day가 없는 경우 사이클 완료 상태 확인
+        if (!level.next_day && level.cycle_status === "completed_pending_confirm") {
+          const ok = window.confirm("🎉 30일 학습을 모두 완료했습니다! 다음 회독을 시작하시겠습니까?");
+          if (!ok) {
+            throw new Error("회독 완료를 나중에 확인할 수 있습니다. 대시보드로 돌아가세요.");
+          }
+          
+          // Day 30 완료 처리 API 호출
+          const completeR = await fetch(`${API_BASE}/levels/day/complete`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ user_id: userId, difficulty_level: selectedLevel, day: 30 }),
+          });
+          
+          if (!completeR.ok) {
+            const data = await completeR.json().catch(() => ({}));
+            throw new Error(data.detail || "failed to complete day 30");
+          }
+          
+          const completeData = await completeR.json();
+          if (completeData.message) {
+            alert(completeData.message);
+          }
+          
+          // 새로운 사이클로 페이지 리로드
+          window.location.reload();
+          return;
+        }
+        
         setCard(null);
         return;
       }
+      
       const qs = new URLSearchParams({ user_id: String(userId), difficulty_level: selectedLevel });
 
       const r = await fetch(`${API_BASE}/cards/today?${qs.toString()}`);
       if (!r.ok) {
         const data = await r.json().catch(() => ({}));
         if (r.status === 404) {
+          // 404 에러 발생 시 추가 확인
+          if (level.cycle_status === "completed_pending_confirm") {
+            const ok = window.confirm("🎉 30일 학습을 모두 완료했습니다! 다음 회독을 시작하시겠습니까?");
+            if (!ok) {
+              throw new Error("회독 완료를 나중에 확인할 수 있습니다. 대시보드로 돌아가세요.");
+            }
+            
+            // Day 30 완료 처리 API 호출
+            const completeR = await fetch(`${API_BASE}/levels/day/complete`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ user_id: userId, difficulty_level: selectedLevel, day: 30 }),
+            });
+            
+            if (!completeR.ok) {
+              const data = await completeR.json().catch(() => ({}));
+              throw new Error(data.detail || "failed to complete day 30");
+            }
+            
+            const completeData = await completeR.json();
+            if (completeData.message) {
+              alert(completeData.message);
+            }
+            
+            // 새로운 사이클로 페이지 리로드
+            window.location.reload();
+            return;
+          }
+          
           throw new Error(
             data.detail ||
               `Day ${level.open_day ?? "-"}에 해당하는 단어가 없습니다. (difficulty_level/day 데이터를 확인하세요)`

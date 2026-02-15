@@ -5,8 +5,7 @@ from sqlalchemy.orm import sessionmaker
 from .settings import settings
 
 
-# 강제 로거 설정
-logging.basicConfig()
+# SQL 로그 활성화
 logging.getLogger("sqlalchemy.engine").setLevel(logging.INFO)
  
 engine = create_engine(settings.database_url, pool_pre_ping=True, echo=True)

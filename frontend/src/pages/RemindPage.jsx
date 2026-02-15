@@ -92,7 +92,7 @@ export default function RemindPage() {
     setLoading(true);
     setError(null);
 
-    fetch(`${API_BASE}/review`, {
+    fetch(`${API_BASE}/review/remind`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ user_id: userId, vocab_id: card.vocab.id, grade }),
@@ -100,7 +100,7 @@ export default function RemindPage() {
       .then(async (r) => {
         if (!r.ok) {
           const data = await r.json().catch(() => ({}));
-          throw new Error(data.detail || "review failed");
+          throw new Error(data.detail || "remind review failed");
         }
         return r.json();
       })
@@ -308,12 +308,12 @@ export default function RemindPage() {
                   }}>
                     {card.vocab.example_en ? (
                       <div style={{ marginBottom: 8, fontStyle: "italic", color: "#333" }}>
-                        {card.vocab.example_en}
+                        <BoldMarkup text={card.vocab.example_en} />
                       </div>
                     ) : null}
                     {card.vocab.example_kr ? (
                       <div style={{ color: "#666" }}>
-                        {card.vocab.example_kr}
+                        <BoldMarkup text={card.vocab.example_kr} />
                       </div>
                     ) : null}
                   </div>
