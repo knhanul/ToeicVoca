@@ -106,12 +106,21 @@ export default function RemindPage() {
       })
       .then(() => loadNext())
       .catch((e) => {
+        console.error("Remind review error:", e);
         setError(e.message);
+        // API 실패해도 다음 카드로 넘어가기 (무한 루프 방지)
+        setTimeout(() => {
+          loadNext();
+        }, 2000);
+      })
+      .finally(() => {
         setLoading(false);
       });
   };
 
   const handleBackToDashboard = () => {
+    // 대시보드 데이터 새로고침을 위해 localStorage에 타임스탬프 저장
+    localStorage.setItem('dashboard_refresh', Date.now().toString());
     navigate("/dashboard");
   };
 

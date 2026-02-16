@@ -33,8 +33,36 @@ export default function DashboardPage() {
       return;
     }
     setUser(JSON.parse(userData));
-    loadStats();
   }, [navigate]);
+
+  useEffect(() => {
+    if (user) {
+      loadStats();
+    }
+  }, [user]);
+
+  // 페이지가 다시 보일 때 데이터 새로고침 (학습 후 돌아올 때)
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && user) {
+        loadStats();
+      }
+    };
+
+    // 다른 페이지에서 새로고침 요청 확인
+    const checkRefreshTrigger = () => {
+      const refreshTime = localStorage.getItem('dashboard_refresh');
+      if (refreshTime && user) {
+        localStorage.removeItem('dashboard_refresh');
+        loadStats();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    checkRefreshTrigger(); // 페이지 로드 시 확인
+    
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [user]);
 
   const loadStats = async () => {
     try {
@@ -54,27 +82,37 @@ export default function DashboardPage() {
       
       // API 데이터로 stats 상태 설정
       const levelsData = data.levels || [];
-      const totalWords = levelsData.reduce((sum, level) => sum + (level.total_words || 0), 0);
-      const completedWords = levelsData.reduce((sum, level) => sum + (level.completed_words || 0), 0);
-      const perfectWords = levelsData.reduce((sum, level) => sum + (level.perfect_count || 0), 0);
+      const totalWords = levelsData.reduce((sum, level) => sum + (level.total_vocab || 0), 0);
+      const perfectWords = levelsData.reduce((sum, level) => sum + (level.perfect_vocab || 0), 0);
       
-      // 레벨별 데이터 변환
-      const levelsStats = levelsData.map(level => ({
-        level: levels.find(l => l.value === String(level.difficulty_level))?.label || `${level.difficulty_level}점대`,
-        total: level.total_words || 0,
-        completed: level.completed_words || 0,
-        progress: level.total_words > 0 ? Math.round((level.completed_words / level.total_words) * 100) : 0,
-        cycles: level.cycle_no || 0
-      }));
+      // 레벨별 데이터 변환 - recent_study 기반으로 실제 학습 단어 수 계산
+      const levelsStats = levelsData.map(level => {
+        const studiedWords = level.recent_study ? level.recent_study.length : 0;
+        const studiedDays = level.recent_study ? [...new Set(level.recent_study.map(s => s.day))].length : 0;
+        
+        return {
+          level: levels.find(l => l.value === String(level.difficulty_level))?.label || `${level.difficulty_level}점대`,
+          total: level.total_vocab || 0, // 총 단어 수
+          completed: studiedWords, // 실제 학습한 단어 수
+          progress: level.total_vocab > 0 ? Math.round((studiedWords / level.total_vocab) * 100) : 0,
+          cycles: level.cycle_no || 0,
+          totalDays: level.total_days || 30, // Day 정보
+          completedDays: level.completed_days || 0, // 완료된 Day 수
+          studiedDays: studiedDays, // 학습한 Day 수
+          perfectWords: level.perfect_vocab || 0
+        };
+      });
+      
+      const totalStudiedWords = levelsStats.reduce((sum, level) => sum + level.completed, 0);
       
       setStats({
         totalWords,
-        learnedWords: completedWords,
+        learnedWords: totalStudiedWords, // 실제 학습한 단어 수
         perfectWords,
         currentLevel: levels.find((l) => l.value === selectedLevel)?.label || "-",
-        studyDays: 0, // API에서 필요 시 추가
+        studyDays: levelsStats.reduce((sum, level) => sum + level.studiedDays, 0), // 학습한 Day 수
         streakDays: 0, // API에서 필요 시 추가
-        completionRate: totalWords > 0 ? Math.round((completedWords / totalWords) * 100) : 0,
+        completionRate: totalWords > 0 ? Math.round((perfectWords / totalWords) * 100) : 0, // Perfect 기반 완성도
         levels: levelsStats
       });
     } catch (error) {
@@ -111,6 +149,8 @@ export default function DashboardPage() {
 
       const data = await r.json();
       const levelData = data.levels?.find((l) => String(l.difficulty_level) === String(level)) || null;
+      
+      // API의 day_word_counts를 그대로 사용 (최신 결과 기반으로 이미 계산됨)
       setDetailStatsByLevel((prev) => ({ ...prev, [String(level)]: levelData }));
     } catch (error) {
       console.error("Failed to load detail stats:", error);
@@ -434,28 +474,30 @@ export default function DashboardPage() {
                               <div className="p-3">
                                 {detail.day_word_counts?.length ? (
                                   <div className="max-h-60 overflow-y-auto">
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2">
+                                    <div className="space-y-2">
                                       {detail.day_word_counts
                                         .slice()
                                         .sort((a, b) => b.day - a.day)
                                         .map((d) => (
                                         <div
                                           key={d.day}
-                                          className="border border-gray-200 rounded-lg px-3 py-2 bg-white"
+                                          className="border border-gray-200 rounded-lg px-4 py-3 bg-white flex items-center justify-between hover:bg-gray-50 transition-colors"
                                         >
-                                          <div className="text-xs font-semibold text-gray-800 whitespace-nowrap overflow-hidden text-ellipsis">
-                                            Day {d.day}
-                                            {d.topic && (
-                                              <span className="text-[10px] text-gray-500 font-normal ml-1">
-                                                - {d.topic}
+                                          <div className="flex-1">
+                                            <div className="text-sm font-semibold text-gray-800">
+                                              Day {d.day}
+                                              {d.topic && (
+                                                <span className="text-xs text-gray-500 font-normal ml-2">
+                                                  - {d.topic}
+                                                </span>
+                                              )}
+                                              <span className="text-xs text-blue-600 font-normal ml-2">
+                                                ({d.cycle_no}회독)
                                               </span>
-                                            )}
-                                            <span className="text-[10px] text-blue-600 font-normal ml-1">
-                                              ({d.cycle_no}회독)
-                                            </span>
-                                            <span className="text-[10px] text-gray-600 ml-2">
+                                            </div>
+                                            <div className="text-xs text-gray-600 mt-1">
                                               모름 {d.unknown_count} / 애매 {d.unsure_count} / 완료 {d.perfect_count} (총 {d.total_count})
-                                            </span>
+                                            </div>
                                           </div>
                                         </div>
                                       ))}
@@ -476,25 +518,25 @@ export default function DashboardPage() {
                               <div className="p-3">
                                 {detail.recent_study?.length ? (
                                   <div className="max-h-60 overflow-y-auto">
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                                    <div className="space-y-2">
                                       {detail.recent_study.map((r, idx) => (
                                       <div
                                         key={`${r.studied_at}-${idx}`}
-                                        className="border border-gray-200 rounded-lg px-3 py-2 bg-white"
+                                        className="border border-gray-200 rounded-lg px-4 py-3 bg-white flex items-center justify-between hover:bg-gray-50 transition-colors"
                                       >
-                                        <div className="text-xs text-gray-600 whitespace-nowrap overflow-hidden text-ellipsis">
-                                          <span className="font-semibold text-gray-800">
+                                        <div className="flex-1">
+                                          <div className="text-sm font-semibold text-gray-800">
                                             {r.word || `Day ${r.day || "?"}`}
                                             {r.day && (
-                                              <span className="text-[10px] text-gray-500 font-normal ml-1">
+                                              <span className="text-xs text-gray-500 font-normal ml-2">
                                                 - {r.topic}
                                               </span>
                                             )}
-                                            <span className="text-[10px] text-gray-600 ml-2">{r.result}</span>
-                                          </span>
-                                          <span className="text-[10px] text-gray-400 ml-2">
+                                            <span className="text-xs text-gray-600 ml-2">{r.result}</span>
+                                          </div>
+                                          <div className="text-xs text-gray-400 mt-1">
                                             {new Date(r.studied_at).toLocaleString()}
-                                          </span>
+                                          </div>
                                         </div>
                                       </div>
                                     ))}

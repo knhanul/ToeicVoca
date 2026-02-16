@@ -692,45 +692,96 @@ def get_remind_card(
     cycle = _get_or_create_active_cycle(db, user_id=user_id, difficulty_level=difficulty_level)
     _ensure_day_rows(db, user_id=user_id, difficulty_level=difficulty_level, cycle_no=cycle.cycle_no)
 
-    open_day = _get_open_day(db, user_id=user_id, difficulty_level=difficulty_level, cycle_no=cycle.cycle_no)
-    if open_day is not None:
-        current_day = int(open_day.day)
-    else:
-        last_completed = db.execute(
-            select(func.max(LevelDayProgress.day)).where(
-                and_(
-                    LevelDayProgress.user_id == user_id,
-                    LevelDayProgress.difficulty_level == difficulty_level,
-                    LevelDayProgress.cycle_no == cycle.cycle_no,
-                    LevelDayProgress.status == "completed",
-                )
-            )
-        ).scalar_one()
-        current_day = int(last_completed or 1)
-
-    # Curriculum Day 기준 최근 7일 윈도우 (날짜 기준 아님)
+    # Day 기준 7일 윈도우 (실제 일자 기준 아님)
     REMIND_CURRICULUM_DAYS = 7
-    start_day = max(1, current_day - REMIND_CURRICULUM_DAYS + 1)
     
-    # 오늘 학습 Day 포함: current_day가 open 상태이면 범위에 포함
-    if open_day is not None and int(open_day.day) > current_day:
-        current_day = int(open_day.day)
-
-    # 현재 회독과 이전 회독의 최근 7일 Day 범위 계산
+    # 가장 마지막 사이클(가장 높은 cycle_no)의 마지막 Day 찾기
+    max_cycle_no = db.execute(
+        select(func.max(LevelCycle.cycle_no)).where(
+            and_(
+                LevelCycle.user_id == user_id,
+                LevelCycle.difficulty_level == difficulty_level
+            )
+        )
+    ).scalar_one() or 1
+    
+    # 마지막 사이클의 마지막 학습 Day 찾기
+    last_cycle_last_day = db.execute(
+        select(func.max(LevelDayProgress.day)).where(
+            and_(
+                LevelDayProgress.user_id == user_id,
+                LevelDayProgress.difficulty_level == difficulty_level,
+                LevelDayProgress.cycle_no == max_cycle_no,
+                LevelDayProgress.status == "completed",
+            )
+        )
+    ).scalar_one() or 0
+    
+    # 마지막 사이클에 open_day가 있다면 그 Day를 기준으로
+    open_day_in_last_cycle = _get_open_day(db, user_id=user_id, difficulty_level=difficulty_level, cycle_no=max_cycle_no)
+    if open_day_in_last_cycle is not None:
+        reference_day = int(open_day_in_last_cycle.day)
+    else:
+        reference_day = max(last_cycle_last_day, 1)
+    
+    # 현재 활성 사이클과 마지막 사이클의 Day 범위 계산
     all_cycle_ranges = []
     
-    # 현재 회독 추가
-    if current_day >= start_day:
+    if reference_day >= REMIND_CURRICULUM_DAYS:
+        # 마지막 Day가 7보다 크면: 마지막 Day ~ 마지막 Day - 7
+        start_day = reference_day - REMIND_CURRICULUM_DAYS + 1
+        
+        # 현재 활성 사이클 추가 (마지막 사이클과 다를 경우)
+        if cycle.cycle_no == max_cycle_no:
+            all_cycle_ranges.append({
+                'cycle_no': cycle.cycle_no,
+                'start_day': start_day,
+                'end_day': reference_day
+            })
+        else:
+            # 현재 활성 사이클의 범위
+            current_cycle_last_day = db.execute(
+                select(func.max(LevelDayProgress.day)).where(
+                    and_(
+                        LevelDayProgress.user_id == user_id,
+                        LevelDayProgress.difficulty_level == difficulty_level,
+                        LevelDayProgress.cycle_no == cycle.cycle_no,
+                        LevelDayProgress.status == "completed",
+                    )
+                )
+            ).scalar_one() or 0
+            
+            current_open_day = _get_open_day(db, user_id=user_id, difficulty_level=difficulty_level, cycle_no=cycle.cycle_no)
+            if current_open_day is not None and int(current_open_day.day) > current_cycle_last_day:
+                current_cycle_last_day = int(current_open_day.day)
+            
+            if current_cycle_last_day > 0:
+                all_cycle_ranges.append({
+                    'cycle_no': cycle.cycle_no,
+                    'start_day': max(1, current_cycle_last_day - REMIND_CURRICULUM_DAYS + 1),
+                    'end_day': current_cycle_last_day
+                })
+            
+            # 마지막 사이클 추가
+            all_cycle_ranges.append({
+                'cycle_no': max_cycle_no,
+                'start_day': start_day,
+                'end_day': reference_day
+            })
+    else:
+        # 현재 Day가 7보다 작으면: 마지막 Day ~ 1Day + 이전 사이클의 30 + 마지막 Day - 7
+        remaining_days = REMIND_CURRICULUM_DAYS - reference_day + 1
+        
+        # 마지막 사이클: 1Day ~ reference_day
         all_cycle_ranges.append({
-            'cycle_no': cycle.cycle_no,
-            'start_day': start_day,
-            'end_day': current_day
+            'cycle_no': max_cycle_no,
+            'start_day': 1,
+            'end_day': reference_day
         })
-    
-    # 이전 회독들의 최근 7일 추가 (현재 회독이 2회독 이상일 때)
-    if cycle.cycle_no > 1:
-        # 이전 회독의 마지막 학습 Day 찾기
-        for prev_cycle_no in range(cycle.cycle_no - 1, 0, -1):
+        
+        # 이전 사이클에서 필요한 만큼 가져오기
+        if max_cycle_no > 1 and remaining_days > 0:
+            prev_cycle_no = max_cycle_no - 1
             prev_cycle_last_day = db.execute(
                 select(func.max(LevelDayProgress.day)).where(
                     and_(
@@ -743,16 +794,37 @@ def get_remind_card(
             ).scalar_one() or 0
             
             if prev_cycle_last_day > 0:
-                prev_start_day = max(1, prev_cycle_last_day - REMIND_CURRICULUM_DAYS + 1)
+                # 이전 사이클의 마지막 Day부터 필요한 만큼
+                prev_start_day = max(1, prev_cycle_last_day - remaining_days + 1)
                 all_cycle_ranges.append({
                     'cycle_no': prev_cycle_no,
                     'start_day': prev_start_day,
                     'end_day': prev_cycle_last_day
                 })
-                
-                # 최근 2개 회독만 포함하도록 제한
-                if len(all_cycle_ranges) >= 2:
-                    break
+        
+        # 현재 활성 사이클이 마지막 사이클과 다를 경우 추가
+        if cycle.cycle_no != max_cycle_no:
+            current_cycle_last_day = db.execute(
+                select(func.max(LevelDayProgress.day)).where(
+                    and_(
+                        LevelDayProgress.user_id == user_id,
+                        LevelDayProgress.difficulty_level == difficulty_level,
+                        LevelDayProgress.cycle_no == cycle.cycle_no,
+                        LevelDayProgress.status == "completed",
+                    )
+                )
+            ).scalar_one() or 0
+            
+            current_open_day = _get_open_day(db, user_id=user_id, difficulty_level=difficulty_level, cycle_no=cycle.cycle_no)
+            if current_open_day is not None and int(current_open_day.day) > current_cycle_last_day:
+                current_cycle_last_day = int(current_open_day.day)
+            
+            if current_cycle_last_day > 0:
+                all_cycle_ranges.append({
+                    'cycle_no': cycle.cycle_no,
+                    'start_day': max(1, current_cycle_last_day - REMIND_CURRICULUM_DAYS + 1),
+                    'end_day': current_cycle_last_day
+                })
 
     if not all_cycle_ranges:
         raise HTTPException(status_code=404, detail="no remind cards")
@@ -1288,17 +1360,16 @@ def get_levels_stats(user_id: int = Query(...), db: Session = Depends(get_db)):
             memorization_pct = int((int(perfect_vocab) / int(total_vocab)) * 100)
 
         # 진행한 Day별 현황 (전 회독 포함)
-        # 모든 회독의 완료된 Day를 가져옴
+        # 모든 회독의 학습 기록이 있는 모든 Day 가져오기 (completed 상태가 아니어도 학습 기록이 있으면 포함)
         all_progressed_days = db.execute(
-            select(LevelDayProgress.day)
+            select(func.distinct(Vocab.day))
+            .join(StudyLog, StudyLog.vocab_id == Vocab.id)
             .where(
                 and_(
-                    LevelDayProgress.user_id == user_id,
-                    LevelDayProgress.difficulty_level == level,
-                    LevelDayProgress.status == "completed",
+                    StudyLog.user_id == user_id,
+                    StudyLog.difficulty_level == level,
                 )
             )
-            .distinct()
         ).scalars().all()
 
         # 각 Day별로 최신 회독 정보와 결과 집계
@@ -1334,23 +1405,53 @@ def get_levels_stats(user_id: int = Query(...), db: Session = Depends(get_db)):
             
             cycle_no = latest_cycle_for_day[0] if latest_cycle_for_day else cycle.cycle_no
             
-            # 해당 Day와 회차의 결과 집계
-            day_result_rows = db.execute(
-                select(Vocab.day, StudyLog.result, func.count(StudyLog.id).label("cnt"))
-                .join(StudyLog, StudyLog.vocab_id == Vocab.id)
+            # 1. 레벨별 모든 단어의 최신 결과를 먼저 계산
+            latest_vocab_results_subq = (
+                select(
+                    StudyLog.vocab_id,
+                    StudyLog.result,
+                    StudyLog.cycle_no,
+                    Vocab.day,
+                    func.row_number()
+                    .over(partition_by=StudyLog.vocab_id, order_by=StudyLog.studied_at.desc())
+                    .label("rn")
+                )
                 .where(
                     and_(
-                        Vocab.difficulty_level == level,
-                        Vocab.day == d_int,
                         StudyLog.user_id == user_id,
                         StudyLog.difficulty_level == level,
-                        StudyLog.cycle_no == cycle_no,
                     )
                 )
-                .group_by(Vocab.day, StudyLog.result)
+                .join(Vocab, Vocab.id == StudyLog.vocab_id)
+                .subquery()
+            )
+            
+            # 2. 현재 Day에 해당하는 단어들의 최신 결과만 필터링
+            day_latest_results = db.execute(
+                select(
+                    latest_vocab_results_subq.c.result,
+                    latest_vocab_results_subq.c.cycle_no,
+                    func.count(latest_vocab_results_subq.c.vocab_id).label("cnt")
+                )
+                .where(
+                    and_(
+                        latest_vocab_results_subq.c.rn == 1,  # 각 단어별 최신 결과만
+                        latest_vocab_results_subq.c.day == d_int  # 현재 Day에 해당하는 단어만
+                    )
+                )
+                .group_by(latest_vocab_results_subq.c.result, latest_vocab_results_subq.c.cycle_no)
             ).all()
             
-            result_counts = {str(r): int(cnt) for _, r, cnt in day_result_rows}
+            # 3. 해당 Day의 가장 최신 회차 찾기
+            if day_latest_results:
+                latest_cycle_for_day = max([row.cycle_no for row in day_latest_results])
+                # 4. 가장 최신 회차의 결과만 집계
+                latest_cycle_results = [row for row in day_latest_results if row.cycle_no == latest_cycle_for_day]
+                result_counts = {str(r.result): int(r.cnt) for r in latest_cycle_results}
+            else:
+                # 해당 Day에 학습 기록이 없는 경우
+                result_counts = {}
+            
             unknown = int(result_counts.get("again", 0))
             unsure = int(result_counts.get("good", 0))
             perfect = int(result_counts.get("perfect", 0))
