@@ -15,9 +15,9 @@ export default function DashboardPage() {
 
   const levels = useMemo(
     () => [
-      { value: "600", label: "600점대" },
-      { value: "800", label: "800점대" },
-      { value: "900", label: "900점대" },
+      { value: "600", label: "600점대", color: "blue", badge: "BEGINNER" },
+      { value: "800", label: "800점대", color: "green", badge: "INTERMEDIATE" },
+      { value: "900", label: "900점대", color: "purple", badge: "ADVANCED" },
     ],
     []
   );
@@ -38,23 +38,58 @@ export default function DashboardPage() {
 
   const loadStats = async () => {
     try {
-      // TODO: 실제 API 연동
-      // 임시 데이터
+      const userId = user?.id;
+      if (!userId) throw new Error("User not logged in");
+
+      // 실제 API 호출로 통계 데이터 가져오기
+      const qs = new URLSearchParams({ user_id: String(userId) });
+      const r = await fetch(`${API_BASE}/stats/levels?${qs.toString()}`);
+      
+      if (!r.ok) {
+        const data = await r.json().catch(() => ({}));
+        throw new Error(data.detail || "failed to load stats");
+      }
+      
+      const data = await r.json();
+      
+      // API 데이터로 stats 상태 설정
+      const levelsData = data.levels || [];
+      const totalWords = levelsData.reduce((sum, level) => sum + (level.total_words || 0), 0);
+      const completedWords = levelsData.reduce((sum, level) => sum + (level.completed_words || 0), 0);
+      const perfectWords = levelsData.reduce((sum, level) => sum + (level.perfect_count || 0), 0);
+      
+      // 레벨별 데이터 변환
+      const levelsStats = levelsData.map(level => ({
+        level: levels.find(l => l.value === String(level.difficulty_level))?.label || `${level.difficulty_level}점대`,
+        total: level.total_words || 0,
+        completed: level.completed_words || 0,
+        progress: level.total_words > 0 ? Math.round((level.completed_words / level.total_words) * 100) : 0,
+        cycles: level.cycle_no || 0
+      }));
+      
       setStats({
-        totalWords: 1500,
-        learnedWords: 856,
+        totalWords,
+        learnedWords: completedWords,
+        perfectWords,
         currentLevel: levels.find((l) => l.value === selectedLevel)?.label || "-",
-        studyDays: 45,
-        streakDays: 12,
-        completionRate: 57,
-        levels: [
-          { level: "600점대", total: 500, completed: 120, progress: 24, cycles: 0 },
-          { level: "800점대", total: 500, completed: 356, progress: 71, cycles: 1 },
-          { level: "900점대", total: 500, completed: 380, progress: 76, cycles: 2 },
-        ]
+        studyDays: 0, // API에서 필요 시 추가
+        streakDays: 0, // API에서 필요 시 추가
+        completionRate: totalWords > 0 ? Math.round((completedWords / totalWords) * 100) : 0,
+        levels: levelsStats
       });
     } catch (error) {
       console.error("Failed to load stats:", error);
+      // 에러 시 기본값 설정
+      setStats({
+        totalWords: 0,
+        learnedWords: 0,
+        perfectWords: 0,
+        currentLevel: "-",
+        studyDays: 0,
+        streakDays: 0,
+        completionRate: 0,
+        levels: []
+      });
     } finally {
       setLoading(false);
     }
@@ -104,155 +139,269 @@ export default function DashboardPage() {
     navigate("/");
   };
 
+  const handleNextStudy = async () => {
+    try {
+      const qs = new URLSearchParams({ user_id: String(user?.id || 1) });
+      const r = await fetch(`${API_BASE}/levels/status?${qs.toString()}`);
+      if (!r.ok) {
+        const data = await r.json().catch(() => ({}));
+        throw new Error(data.detail || "failed to load level status");
+      }
+      const data = await r.json();
+      const level = data.levels?.find((l) => String(l.difficulty_level) === String(selectedLevel));
+      if (!level) {
+        alert("레벨 상태를 불러올 수 없습니다.");
+        return;
+      }
+      const nextDay = level.open_day ? level.open_day + 1 : level.next_day;
+      
+      if (!nextDay && !level.open_day && level.cycle_status === "completed_pending_confirm") {
+        const ok = window.confirm("🎉 30일 학습을 모두 완료했습니다! 다음 회독을 시작하시겠습니까?");
+        if (!ok) return;
+        
+        const completeR = await fetch(`${API_BASE}/levels/day/complete`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ user_id: user?.id || 1, difficulty_level: selectedLevel, day: 30 }),
+        });
+        
+        if (!completeR.ok) {
+          const data = await completeR.json().catch(() => ({}));
+          if (data.detail && data.detail.includes("이미")) {
+            alert(data.detail);
+            loadStats();
+            loadDetailStats(selectedLevel);
+            return;
+          }
+          throw new Error(data.detail || "failed to complete day 30");
+        }
+        
+        const completeData = await completeR.json();
+        if (completeData.message) {
+          alert(completeData.message);
+        }
+        
+        if (completeData.cycle_no > 1) {
+          window.location.reload();
+          return;
+        }
+      }
+      
+      if (!nextDay) {
+        alert("학습을 진행할 수 없는 상태입니다. 대시보드를 확인해주세요.");
+        return;
+      }
+      const ok = window.confirm(`다음 Day ${nextDay} 학습을 시작할까요?\n${level.open_day ? `현재 Day ${level.open_day}를 완료하고 다음 Day로 진행합니다.` : ''}`);
+      if (!ok) return;
+      const openR = await fetch(`${API_BASE}/levels/day/open`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_id: user?.id || 1, difficulty_level: selectedLevel, day: nextDay }),
+      });
+      if (!openR.ok) {
+        const data = await openR.json().catch(() => ({}));
+        throw new Error(data.detail || "failed to open day");
+      }
+      const openData = await openR.json();
+      if (openData.message) {
+        alert(openData.message);
+        if (openData.cycle_no > 1) {
+          loadStats();
+          loadDetailStats(selectedLevel);
+        }
+      } else {
+        alert(`Day ${nextDay}를 열었습니다. 학습하기로 이동합니다.`);
+      }
+      navigate(`/study?difficulty_level=${encodeURIComponent(selectedLevel)}`);
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+
   if (loading) {
     return (
-      <div style={{
-        fontFamily: "system-ui",
-        minHeight: "100vh",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        background: "#f5f5f5"
-      }}>
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div>로딩 중...</div>
       </div>
     );
   }
 
+  const getLevelColor = (levelValue) => {
+    const level = levels.find(l => l.value === levelValue);
+    return level ? level.color : "blue";
+  };
+
+  const getLevelBadge = (levelValue) => {
+    const level = levels.find(l => l.value === levelValue);
+    return level ? level.badge : "BEGINNER";
+  };
+
   return (
-    <div style={{
-      fontFamily: "system-ui",
-      minHeight: "100vh",
-      background: "#f5f5f5"
-    }}>
+    <div className="min-h-screen bg-gray-50 pb-28">
       {/* Header */}
-      <header style={{
-        background: "white",
-        padding: "16px 24px",
-        boxShadow: "0 2px 4px rgba(0,0,0,0.1)",
-        display: "flex",
-        justifyContent: "space-between",
-        alignItems: "center"
-      }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-          <h1 style={{ margin: 0, color: "#333" }}>TOEIC VOCA</h1>
-          <span style={{ color: "#666" }}>|</span>
-          <span style={{ color: "#666" }}>대시보드</span>
+      <header className="sticky top-0 z-50 bg-white/80 backdrop-blur-md px-5 py-4 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-full bg-gradient-to-br from-gray-800 to-black flex items-center justify-center text-white font-bold shadow-sm">
+            {user?.username?.charAt(0).toUpperCase() || "U"}
+          </div>
+          <div>
+            <p className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold">Welcome back</p>
+            <h2 className="text-sm font-bold text-gray-900">{user?.username}님</h2>
+          </div>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-          <span style={{ color: "#666" }}>안녕하세요, {user?.username}님!</span>
-          <button
-            onClick={handleLogout}
-            style={{
-              padding: "8px 16px",
-              background: "#667eea",
-              color: "white",
-              border: "none",
-              borderRadius: 6,
-              cursor: "pointer"
-            }}
-          >
-            로그아웃
+        <div className="flex items-center gap-4 text-gray-500">
+          <button className="relative bg-gray-100 p-2 rounded-full">
+            <span className="material-symbols-outlined text-[22px] block">notifications</span>
+            <span className="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full border-2 border-white"></span>
           </button>
         </div>
       </header>
 
-      <main style={{ padding: 24, maxWidth: 1200, margin: "0 auto" }}>
-        <div
-          style={{
-            background: "white",
-            padding: 20,
-            borderRadius: 12,
-            boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
-            marginBottom: 24,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: 16,
-            flexWrap: "wrap",
-          }}
-        >
-          <div>
-            <div style={{ fontWeight: 700, marginBottom: 6, color: "#333" }}>
-              학습 레벨 선택
+      {/* Score Display */}
+      <section className="px-5 mt-4 max-w-md mx-auto">
+        <div className="bg-gradient-to-r from-blue-500 to-purple-600 rounded-[24px] p-6 shadow-[0_10px_25px_-5px_rgba(0,0,0,0.1),0_8px_10px_-6px_rgba(0,0,0,0.1)] text-white">
+          <div className="flex justify-between items-center">
+            <div>
+              <p className="text-sm opacity-90 mb-1">완벽하게 마스터한 단어</p>
+              <div className="text-3xl font-bold">{stats?.perfectWords || 0}</div>
+              <p className="text-sm opacity-75 mt-1">전체 {stats?.totalWords || 0}단어 중</p>
             </div>
-            <div style={{ color: "#666", fontSize: 14 }}>
-              difficulty_level 기준으로 단어를 필터링해서 학습합니다.
+            <div className="text-right">
+              <div className="text-4xl font-bold">
+                {Math.round(((stats?.perfectWords || 0) / (stats?.totalWords || 1)) * 100)}%
+              </div>
+              <p className="text-sm opacity-75">완성도</p>
             </div>
           </div>
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+        </div>
+      </section>
+
+      <main className="px-5 mt-6 max-w-md mx-auto space-y-8">
+        {/* Quick Actions */}
+        <section className="grid grid-cols-1 gap-4">
+          <Link
+            to={`/study?difficulty_level=${encodeURIComponent(selectedLevel)}`}
+            className="group relative overflow-hidden bg-white rounded-[32px] p-6 shadow-[0_10px_25px_-5px_rgba(0,0,0,0.05),0_8px_10px_-6px_rgba(0,0,0,0.05)] border border-gray-100/50 flex items-center justify-between active:scale-[0.98] transition-transform"
+          >
+            <div className="flex items-center gap-5">
+              <div className="w-16 h-16 bg-blue-50 rounded-[22px] flex items-center justify-center">
+                <span className="material-symbols-outlined text-blue-600 text-3xl">school</span>
+              </div>
+              <div>
+                <h4 className="font-bold text-xl text-gray-900">학습하기</h4>
+                <p className="text-sm text-gray-500">선택한 레벨 집중 학습</p>
+              </div>
+            </div>
+            <span className="material-symbols-outlined text-gray-300">chevron_right</span>
+          </Link>
+
+          <Link
+            to={`/remind?difficulty_level=${encodeURIComponent(selectedLevel)}`}
+            className="group relative overflow-hidden bg-white rounded-[32px] p-6 shadow-[0_10px_25px_-5px_rgba(0,0,0,0.05),0_8px_10px_-6px_rgba(0,0,0,0.05)] border border-gray-100/50 flex items-center justify-between active:scale-[0.98] transition-transform"
+          >
+            <div className="flex items-center gap-5">
+              <div className="w-16 h-16 bg-orange-50 rounded-[22px] flex items-center justify-center">
+                <span className="material-symbols-outlined text-orange-500 text-3xl">history</span>
+              </div>
+              <div>
+                <h4 className="font-bold text-xl text-gray-900">리마인드</h4>
+                <p className="text-sm text-gray-500">틀린 단어 7일 복습</p>
+              </div>
+            </div>
+            <span className="material-symbols-outlined text-gray-300">chevron_right</span>
+          </Link>
+        </section>
+
+        {/* Next Study Button */}
+        <section>
+          <button
+            onClick={handleNextStudy}
+            className="w-full flex items-center justify-between bg-blue-50/50 border border-blue-100/50 rounded-2xl px-5 py-3 text-blue-700 active:bg-blue-100 transition-colors"
+          >
+            <div className="flex items-center gap-3">
+              <span className="material-symbols-outlined text-blue-600 text-lg">play_circle</span>
+              <span className="text-sm font-semibold">다음 학습 시작</span>
+            </div>
+            <span className="material-symbols-outlined text-sm">arrow_forward_ios</span>
+          </button>
+        </section>
+
+        {/* Level Selection */}
+        <section>
+          <div className="flex items-baseline justify-between mb-4 px-1">
+            <h3 className="text-lg font-bold text-gray-900">목표 점수</h3>
+            <span className="text-xs text-blue-500 font-medium">난이도 설정</span>
+          </div>
+          <div className="flex gap-3 overflow-x-auto no-scrollbar py-1">
             {levels.map((l) => (
               <button
                 key={l.value}
                 onClick={() => handleLevelSelect(l.value)}
-                style={{
-                  padding: "10px 14px",
-                  borderRadius: 10,
-                  border: selectedLevel === l.value ? "2px solid #667eea" : "1px solid #ddd",
-                  background: selectedLevel === l.value ? "#eef2ff" : "white",
-                  cursor: "pointer",
-                  fontWeight: 600,
-                  color: "#333",
-                }}
+                className={`flex-shrink-0 px-6 py-2.5 rounded-2xl bg-white border shadow-sm font-medium text-sm transition-colors ${
+                  selectedLevel === l.value
+                    ? `border-${l.color}-500 text-${l.color}-600 font-bold`
+                    : "border-gray-100 text-gray-500"
+                }`}
               >
                 {l.label}
               </button>
             ))}
           </div>
-        </div>
+        </section>
 
-        {/* 레벨별 진행률 + 암기율(Perfect 기반) */}
-        <div style={{
-          background: "white",
-          padding: 24,
-          borderRadius: 12,
-          boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
-          marginBottom: 32
-        }}>
-          <h2 style={{ margin: "0 0 20px 0", color: "#333" }}>레벨별 통계</h2>
-          <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+        {/* Level Progress */}
+        <section>
+          <h3 className="text-lg font-bold text-gray-900 mb-4 px-1">레벨별 학습 현황</h3>
+          <div className="space-y-4">
             {levels.map((l) => {
-              const levelData = stats?.levels?.find((lvl) => lvl.difficulty_level === l.value);
-              const label = l.label;
-              const dayProgress = levelData?.progress ?? 0;
-              const memoPct = levelData?.memorization_pct ?? 0;
+              const levelData = stats?.levels?.find((lvl) => lvl.level === l.label);
+              const progress = levelData?.progress ?? 0;
+              const completed = levelData?.completed ?? 0;
+              const total = levelData?.total ?? 500;
               const isExpanded = expandedLevel === l.value;
               const detail = isExpanded ? detailStatsByLevel[String(l.value)] : null;
+              
               return (
-                <div key={l.value} style={{ border: "1px solid #eee", borderRadius: 12, padding: 16 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12 }}>
-                    <div style={{ fontWeight: 700, color: "#333" }}>{label}</div>
-                    <button
+                <div key={l.value} className="bg-white rounded-[24px] p-5 shadow-[0_4px_16px_rgba(0,0,0,0.04)] border border-gray-100/50">
+                  <div className="flex justify-between items-start mb-4">
+                    <div>
+                      <span className={`text-[10px] font-bold bg-${l.color}-50 text-${l.color}-600 px-2 py-1 rounded-md mb-2 inline-block`}>
+                        {l.badge}
+                      </span>
+                      <h4 className="text-base font-bold text-gray-900">{l.label} 마스터</h4>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-lg font-bold text-gray-900">{progress}%</span>
+                    </div>
+                  </div>
+                  
+                  <div className="relative h-2 w-full bg-gray-100 rounded-full overflow-hidden mb-4">
+                    <div 
+                      className={`absolute top-0 left-0 h-full bg-${l.color}-500 rounded-full`} 
+                      style={{ width: `${progress}%` }}
+                    />
+                  </div>
+                  
+                  <div className="flex justify-between items-center text-[11px] text-gray-500 font-medium">
+                    <div className="flex gap-3">
+                      <span>완료 {completed}</span>
+                      <span>미완료 {total - completed}</span>
+                    </div>
+                    <button 
                       onClick={() => toggleLevelDetail(l.value)}
-                      style={{
-                        padding: "6px 12px",
-                        borderRadius: 8,
-                        border: "1px solid #ddd",
-                        background: isExpanded ? "#eef2ff" : "white",
-                        cursor: "pointer",
-                        fontSize: 13,
-                        fontWeight: 600,
-                        color: "#667eea"
-                      }}
+                      className="flex items-center text-blue-500 font-bold"
                     >
-                      {isExpanded ? "닫기" : "상세보기"}
+                      상세보기 <span className="material-symbols-outlined text-[16px] ml-0.5">chevron_right</span>
                     </button>
                   </div>
 
-                  <div style={{ marginTop: 10 }}>
-                    <div style={{ fontSize: 13, color: "#666", marginBottom: 6 }}>Day 진행률</div>
-                    <div style={{ height: 16, background: "#e2e8f0", borderRadius: 999, overflow: "hidden" }}>
-                      <div style={{ height: "100%", width: `${dayProgress}%`, background: "#667eea" }} />
-                    </div>
-                  </div>
-
                   {isExpanded && (
-                    <div style={{ marginTop: 16 }}>
+                    <div className="mt-4 pt-4 border-t border-gray-100">
                       {detailLoading ? (
-                        <div style={{ fontSize: 13, color: "#666" }}>불러오는 중...</div>
+                        <div className="text-xs text-gray-500">불러오는 중...</div>
                       ) : detail ? (
                         <div>
-                          {/* 탭 버튼 */}
+                          {/* Tabs */}
                           <div className="flex border-b border-gray-300 mb-3">
                             <button
                               className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
@@ -276,7 +425,7 @@ export default function DashboardPage() {
                             </button>
                           </div>
 
-                          {/* 탭 내용 */}
+                          {/* Tab Content */}
                           {activeTab === "dayProgress" && (
                             <div className="border border-gray-300 rounded-xl shadow-sm overflow-hidden">
                               <div className="bg-blue-50 px-3 py-2 border-b border-gray-300">
@@ -284,11 +433,12 @@ export default function DashboardPage() {
                               </div>
                               <div className="p-3">
                                 {detail.day_word_counts?.length ? (
-                                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2">
-                                    {detail.day_word_counts
-                                      .slice()
-                                      .sort((a, b) => b.day - a.day)
-                                      .map((d) => (
+                                  <div className="max-h-60 overflow-y-auto">
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2">
+                                      {detail.day_word_counts
+                                        .slice()
+                                        .sort((a, b) => b.day - a.day)
+                                        .map((d) => (
                                         <div
                                           key={d.day}
                                           className="border border-gray-200 rounded-lg px-3 py-2 bg-white"
@@ -309,6 +459,7 @@ export default function DashboardPage() {
                                           </div>
                                         </div>
                                       ))}
+                                    </div>
                                   </div>
                                 ) : (
                                   <div className="text-xs text-gray-500">아직 진행한 Day가 없습니다.</div>
@@ -324,31 +475,30 @@ export default function DashboardPage() {
                               </div>
                               <div className="p-3">
                                 {detail.recent_study?.length ? (
-                                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                                    {detail.recent_study.map((r, idx) => (
+                                  <div className="max-h-60 overflow-y-auto">
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                                      {detail.recent_study.map((r, idx) => (
                                       <div
                                         key={`${r.studied_at}-${idx}`}
                                         className="border border-gray-200 rounded-lg px-3 py-2 bg-white"
                                       >
                                         <div className="text-xs text-gray-600 whitespace-nowrap overflow-hidden text-ellipsis">
-                                          {new Date(r.studied_at).toLocaleString()}
-                                          <span className="font-semibold text-gray-800 ml-2">
+                                          <span className="font-semibold text-gray-800">
                                             {r.word || `Day ${r.day || "?"}`}
                                             {r.day && (
                                               <span className="text-[10px] text-gray-500 font-normal ml-1">
-                                                Day {r.day}
-                                              </span>
-                                            )}
-                                            {r.topic && (
-                                              <span className="text-[10px] text-gray-400 font-normal ml-1">
                                                 - {r.topic}
                                               </span>
                                             )}
+                                            <span className="text-[10px] text-gray-600 ml-2">{r.result}</span>
                                           </span>
-                                          <span className="text-[10px] text-gray-600 ml-2">{r.result}</span>
+                                          <span className="text-[10px] text-gray-400 ml-2">
+                                            {new Date(r.studied_at).toLocaleString()}
+                                          </span>
                                         </div>
                                       </div>
                                     ))}
+                                    </div>
                                   </div>
                                 ) : (
                                   <div className="text-xs text-gray-500">학습 기록이 없습니다.</div>
@@ -364,183 +514,28 @@ export default function DashboardPage() {
               );
             })}
           </div>
-        </div>
-
-        {/* 기능 메뉴 */}
-        <div style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))",
-          gap: 20
-        }}>
-          <Link
-            to={`/study?difficulty_level=${encodeURIComponent(selectedLevel)}`}
-            style={{
-              background: "white",
-              padding: 32,
-              borderRadius: 12,
-              boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
-              textDecoration: "none",
-              color: "inherit",
-              textAlign: "center",
-              transition: "transform 0.2s, box-shadow 0.2s"
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.transform = "translateY(-4px)";
-              e.currentTarget.style.boxShadow = "0 4px 12px rgba(0,0,0,0.15)";
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.transform = "translateY(0)";
-              e.currentTarget.style.boxShadow = "0 2px 8px rgba(0,0,0,0.1)";
-            }}
-          >
-            <div style={{ fontSize: 48, marginBottom: 16 }}></div>
-            <div style={{ fontSize: 20, fontWeight: 700, marginBottom: 8 }}>학습하기</div>
-            <div style={{ fontSize: 14, color: "#666" }}>
-              {levels.find((l) => l.value === selectedLevel)?.label || "-"} 단어 학습
-            </div>
-          </Link>
-
-          <Link
-            to={`/remind?difficulty_level=${encodeURIComponent(selectedLevel)}`}
-            style={{
-              background: "white",
-              padding: 32,
-              borderRadius: 12,
-              boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
-              textDecoration: "none",
-              color: "inherit",
-              textAlign: "center",
-              transition: "transform 0.2s, box-shadow 0.2s"
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.transform = "translateY(-4px)";
-              e.currentTarget.style.boxShadow = "0 4px 12px rgba(0,0,0,0.15)";
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.transform = "translateY(0)";
-              e.currentTarget.style.boxShadow = "0 2px 8px rgba(0,0,0,0.1)";
-            }}
-          >
-            <div style={{ fontSize: 48, marginBottom: 16 }}></div>
-            <div style={{ fontSize: 20, fontWeight: 700, marginBottom: 8 }}>리마인드</div>
-            <div style={{ fontSize: 14, color: "#666" }}>
-              최근 7일간 학습한 단어 복습
-            </div>
-          </Link>
-
-          <button
-            onClick={async () => {
-              try {
-                const qs = new URLSearchParams({ user_id: "1" });
-                const r = await fetch(`${API_BASE}/levels/status?${qs.toString()}`);
-                if (!r.ok) {
-                  const data = await r.json().catch(() => ({}));
-                  throw new Error(data.detail || "failed to load level status");
-                }
-                const data = await r.json();
-                const level = data.levels?.find((l) => String(l.difficulty_level) === String(selectedLevel));
-                if (!level) {
-                  alert("레벨 상태를 불러올 수 없습니다.");
-                  return;
-                }
-                // 다음 Day 계산 (open_day가 있으면 +1, 없으면 next_day)
-                const nextDay = level.open_day ? level.open_day + 1 : level.next_day;
-                
-                // 사이클 완료 확인
-                if (!nextDay && !level.open_day && level.cycle_status === "completed_pending_confirm") {
-                  const ok = window.confirm("🎉 30일 학습을 모두 완료했습니다! 다음 회독을 시작하시겠습니까?");
-                  if (!ok) return;
-                  
-                  // Day 30 완료 처리 API 호출
-                  const completeR = await fetch(`${API_BASE}/levels/day/complete`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ user_id: 1, difficulty_level: selectedLevel, day: 30 }),
-                  });
-                  
-                  if (!completeR.ok) {
-                    const data = await completeR.json().catch(() => ({}));
-                    if (data.detail && data.detail.includes("이미")) {
-                      alert(data.detail);
-                      // 이미 회독이 진행 중이면 상태 새로고침
-                      loadStats();
-                      loadDetailStats(selectedLevel);
-                      return;
-                    }
-                    throw new Error(data.detail || "failed to complete day 30");
-                  }
-                  
-                  const completeData = await completeR.json();
-                  if (completeData.message) {
-                    alert(completeData.message);
-                  }
-                  
-                  // 새로운 사이클이 시작되면 페이지 리로드
-                  if (completeData.cycle_no > 1) {
-                    window.location.reload();
-                    return;
-                  }
-                }
-                
-                if (!nextDay) {
-                  alert("학습을 진행할 수 없는 상태입니다. 대시보드를 확인해주세요.");
-                  return;
-                }
-                const ok = window.confirm(`다음 Day ${nextDay} 학습을 시작할까요?\n${level.open_day ? `현재 Day ${level.open_day}를 완료하고 다음 Day로 진행합니다.` : ''}`);
-                if (!ok) return;
-                const openR = await fetch(`${API_BASE}/levels/day/open`, {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ user_id: 1, difficulty_level: selectedLevel, day: nextDay }),
-                });
-                if (!openR.ok) {
-                  const data = await openR.json().catch(() => ({}));
-                  throw new Error(data.detail || "failed to open day");
-                }
-                const openData = await openR.json();
-                if (openData.message) {
-                  alert(openData.message);
-                  // 새로운 사이클이 시작되면 대시보드 새로고침
-                  if (openData.cycle_no > 1) {
-                    loadStats();
-                    loadDetailStats(selectedLevel);
-                  }
-                } else {
-                  alert(`Day ${nextDay}를 열었습니다. 학습하기로 이동합니다.`);
-                }
-                navigate(`/study?difficulty_level=${encodeURIComponent(selectedLevel)}`);
-              } catch (e) {
-                alert(e.message);
-              }
-            }}
-            style={{
-              background: "white",
-              padding: 32,
-              borderRadius: 12,
-              boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
-              border: "none",
-              color: "inherit",
-              textAlign: "center",
-              transition: "transform 0.2s, box-shadow 0.2s",
-              cursor: "pointer"
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.transform = "translateY(-4px)";
-              e.currentTarget.style.boxShadow = "0 4px 12px rgba(0,0,0,0.15)";
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.transform = "translateY(0)";
-              e.currentTarget.style.boxShadow = "0 2px 8px rgba(0,0,0,0.1)";
-            }}
-          >
-            <div style={{ fontSize: 48, marginBottom: 16 }}></div>
-            <div style={{ fontSize: 20, fontWeight: 700, marginBottom: 8 }}>다음 학습 시작</div>
-            <div style={{ fontSize: 14, color: "#666" }}>
-              현재 레벨의 다음 Day를 바로 시작
-            </div>
-          </button>
-        </div>
+        </section>
       </main>
+
+      {/* Bottom Navigation */}
+      <nav className="fixed bottom-0 left-0 right-0 bg-white/90 backdrop-blur-xl shadow-[0_-0.5px_0_0_rgba(0,0,0,0.1)] px-6 pb-8 pt-3 flex justify-between items-center z-50">
+        <button className="flex flex-col items-center gap-1 text-blue-600">
+          <span className="material-symbols-outlined fill-1">home</span>
+          <span className="text-[10px] font-bold">홈</span>
+        </button>
+        <button className="flex flex-col items-center gap-1 text-gray-400">
+          <span className="material-symbols-outlined">menu_book</span>
+          <span className="text-[10px] font-medium">학습</span>
+        </button>
+        <button className="flex flex-col items-center gap-1 text-gray-400">
+          <span className="material-symbols-outlined">history</span>
+          <span className="text-[10px] font-medium">리마인드</span>
+        </button>
+        <button className="flex flex-col items-center gap-1 text-gray-400">
+          <span className="material-symbols-outlined">person</span>
+          <span className="text-[10px] font-medium">프로필</span>
+        </button>
+      </nav>
     </div>
   );
 }

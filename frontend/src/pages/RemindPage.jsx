@@ -15,9 +15,9 @@ export default function RemindPage() {
 
   const levels = useMemo(
     () => [
-      { value: "600", label: "600점대" },
-      { value: "800", label: "800점대" },
-      { value: "900", label: "900점대" },
+      { value: "600", label: "600점대", color: "blue", badge: "BEGINNER" },
+      { value: "800", label: "800점대", color: "green", badge: "INTERMEDIATE" },
+      { value: "900", label: "900점대", color: "purple", badge: "ADVANCED" },
     ],
     []
   );
@@ -116,181 +116,121 @@ export default function RemindPage() {
   };
 
   if (!user) {
-    return <div>로딩 중...</div>;
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div>로딩 중...</div>
+      </div>
+    );
   }
 
+  const getLevelColor = (levelValue) => {
+    const level = levels.find(l => l.value === levelValue);
+    return level ? level.color : "blue";
+  };
+
+  const getLevelBadge = (levelValue) => {
+    const level = levels.find(l => l.value === levelValue);
+    return level ? level.badge : "BEGINNER";
+  };
+
   return (
-    <div style={{
-      fontFamily: "system-ui",
-      minHeight: "100vh",
-      background: "#f5f5f5"
-    }}>
+    <div className="min-h-screen bg-gray-50 pb-20">
       {/* Header */}
-      <header style={{
-        background: "white",
-        padding: "16px 24px",
-        boxShadow: "0 2px 4px rgba(0,0,0,0.1)",
-        display: "flex",
-        justifyContent: "space-between",
-        alignItems: "center"
-      }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+      <header className="sticky top-0 z-50 bg-white/80 backdrop-blur-md px-5 py-4 flex items-center justify-between">
+        <div className="flex items-center gap-3">
           <button
             onClick={handleBackToDashboard}
-            style={{
-              background: "none",
-              border: "none",
-              fontSize: 20,
-              cursor: "pointer",
-              color: "#667eea"
-            }}
+            className="bg-none border-none text-[20px] cursor-pointer text-blue-600"
           >
-            ←
+            <span className="material-symbols-outlined">arrow_back</span>
           </button>
-          <h1 style={{ margin: 0, color: "#333" }}>리마인드 학습</h1>
+          <h1 className="text-lg font-bold text-gray-900">리마인드 학습</h1>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="flex gap-2 flex-wrap">
             {levels.map((l) => (
               <button
                 key={l.value}
                 onClick={() => handleChangeLevel(l.value)}
-                style={{
-                  padding: "6px 10px",
-                  borderRadius: 999,
-                  border: selectedLevel === l.value ? "2px solid #667eea" : "1px solid #ddd",
-                  background: selectedLevel === l.value ? "#eef2ff" : "white",
-                  cursor: "pointer",
-                  fontWeight: 600,
-                  color: "#333",
-                  fontSize: 12,
-                }}
+                className={`px-3 py-1.5 rounded-full border text-xs font-medium transition-colors ${
+                  selectedLevel === l.value
+                    ? `border-${l.color}-500 bg-${l.color}-50 text-${l.color}-600 font-bold`
+                    : "border-gray-200 bg-white text-gray-500"
+                }`}
               >
                 {l.label}
               </button>
             ))}
           </div>
-          <div style={{ color: "#666" }}>
+          <div className="text-sm text-gray-600">
             {user.username}님
           </div>
         </div>
       </header>
 
-      <div style={{
-        padding: 24,
-        maxWidth: 720,
-        margin: "0 auto"
-      }}>
-        <div style={{
-          background: "white",
-          borderRadius: 12,
-          padding: 20,
-          boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
-          marginBottom: 16
-        }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-            <h2 style={{ margin: 0, color: "#333" }}>리마인드 학습</h2>
-            <div style={{ color: "#666", fontSize: 14 }}>
+      <div className="px-5 mt-4 max-w-md mx-auto">
+        <div className="bg-white rounded-[24px] p-6 shadow-[0_10px_25px_-5px_rgba(0,0,0,0.05),0_8px_10px_-6px_rgba(0,0,0,0.05)] border border-gray-100/50">
+          <div className="flex justify-between items-center mb-6">
+            <h2 className="text-xl font-bold text-gray-900">리마인드 학습</h2>
+            <div className="text-sm text-gray-500">
               최근 7일간 학습한 단어 복습
             </div>
           </div>
 
+          {/* Error Display */}
           {error ? (
-            <div style={{
-              background: "#fee",
-              border: "1px solid #fbb",
-              padding: 12,
-              borderRadius: 8,
-              marginBottom: 16
-            }}>
-              {error}
+            <div className="bg-red-50 border border-red-100 rounded-xl p-4 mb-6">
+              <div className="text-red-700 text-sm">{error}</div>
             </div>
           ) : null}
 
-          <div style={{
-            border: "1px solid #ddd",
-            borderRadius: 12,
-            padding: 20,
-            background: "#fff",
-            boxShadow: "0 1px 4px rgba(0,0,0,0.06)"
-          }}>
+          {/* Main Card */}
+          <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-[0_1px_4px_rgba(0,0,0,0.06)]">
             {loading ? (
-              <div style={{ textAlign: "center", padding: 40 }}>로딩 중...</div>
+              <div className="text-center py-10">
+                <div className="text-gray-500">로딩 중...</div>
+              </div>
             ) : !card ? (
-              <div style={{ textAlign: "center", padding: 28 }}>
-                <div style={{ fontSize: 18, fontWeight: 700, color: "#333" }}>
+              <div className="text-center py-8">
+                <div className="text-lg font-bold text-gray-900 mb-2">
                   리마인드할 단어가 없습니다.
                 </div>
-                <div style={{ color: "#666", marginTop: 8, fontSize: 14 }}>
+                <div className="text-gray-500 text-sm mb-4">
                   최근 7일간 학습한 단어만 대상입니다.
                 </div>
                 <button
                   onClick={handleBackToDashboard}
-                  style={{
-                    marginTop: 16,
-                    padding: "12px 20px",
-                    background: "#667eea",
-                    color: "white",
-                    border: "none",
-                    borderRadius: 10,
-                    cursor: "pointer",
-                    fontWeight: 700,
-                  }}
+                  className="bg-blue-600 text-white px-6 py-3 rounded-xl font-semibold hover:bg-blue-700 transition-colors"
                 >
                   대시보드로 돌아가기
                 </button>
               </div>
             ) : (
               <div>
-                {/* Day Topic 크게 표시 */}
+                {/* Day Topic */}
                 {card.vocab.topic ? (
-                  <div style={{
-                    background: "#fff8e1",
-                    border: "1px solid #ffecb3",
-                    borderRadius: 10,
-                    padding: 16,
-                    marginBottom: 16,
-                    fontSize: 16,
-                    fontWeight: 700,
-                    color: "#b8860b",
-                    textAlign: "center"
-                  }}>
-                    Day {card.vocab.day} 주제: {card.vocab.topic}
+                  <div className="bg-orange-50 border border-orange-100 rounded-xl p-4 mb-6">
+                    <div className="text-center">
+                      <div className="text-sm font-bold text-orange-800">
+                        Day {card.vocab.day} 주제: {card.vocab.topic}
+                      </div>
+                    </div>
                   </div>
                 ) : null}
 
                 {/* Word */}
-                <div style={{
-                  fontSize: 28,
-                  fontWeight: 700,
-                  color: "#333",
-                  marginBottom: 16,
-                  textAlign: "center"
-                }}>
+                <div className="text-3xl font-bold text-gray-900 text-center mb-6">
                   {card.vocab.word}
                 </div>
 
                 {/* Meaning */}
-                <div style={{
-                  fontSize: 18,
-                  color: "#555",
-                  marginBottom: 20,
-                  textAlign: "center"
-                }}>
+                <div className="text-lg text-gray-700 text-center mb-5">
                   {revealMeaning ? (
                     <BoldMarkup>{card.vocab.meaning}</BoldMarkup>
                   ) : (
                     <button
                       onClick={() => setRevealMeaning(true)}
-                      style={{
-                        padding: "10px 20px",
-                        background: "#667eea",
-                        color: "white",
-                        border: "none",
-                        borderRadius: 8,
-                        cursor: "pointer",
-                        fontWeight: 600,
-                      }}
+                      className="bg-blue-600 text-white px-6 py-2.5 rounded-xl font-semibold hover:bg-blue-700 transition-colors"
                     >
                       의미 보기
                     </button>
@@ -299,71 +239,52 @@ export default function RemindPage() {
 
                 {/* Example */}
                 {revealMeaning && (card.vocab.example_en || card.vocab.example_kr) ? (
-                  <div style={{
-                    background: "#f7fafc",
-                    border: "1px solid #e2e8f0",
-                    borderRadius: 8,
-                    padding: 16,
-                    marginBottom: 20,
-                  }}>
+                  <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 mb-5">
                     {card.vocab.example_en ? (
-                      <div style={{ marginBottom: 8, fontStyle: "italic", color: "#333" }}>
+                      <div className="mb-2 italic text-gray-800">
                         <BoldMarkup text={card.vocab.example_en} />
                       </div>
                     ) : null}
                     {card.vocab.example_kr ? (
-                      <div style={{ color: "#666" }}>
+                      <div className="text-gray-600">
                         <BoldMarkup text={card.vocab.example_kr} />
                       </div>
                     ) : null}
                   </div>
                 ) : null}
 
-                {/* Buttons */}
-                <div style={{
-                  display: "flex",
-                  gap: 12,
-                  justifyContent: "center"
-                }}>
+                {/* Action Buttons */}
+                <div className="flex gap-3 justify-center">
                   <button
                     onClick={() => submit("again")}
-                    style={{
-                      padding: "12px 20px",
-                      background: "#e53e3e",
-                      color: "white",
-                      border: "none",
-                      borderRadius: 10,
-                      cursor: "pointer",
-                      fontWeight: 700,
-                    }}
+                    disabled={loading}
+                    className={`px-6 py-3 rounded-xl font-semibold transition-all ${
+                      loading 
+                        ? "bg-gray-300 text-gray-500 cursor-not-allowed opacity-70"
+                        : "bg-red-500 text-white hover:bg-red-600 active:scale-[0.98]"
+                    }`}
                   >
                     모름 (Again)
                   </button>
                   <button
                     onClick={() => submit("good")}
-                    style={{
-                      padding: "12px 20px",
-                      background: "#ed8936",
-                      color: "white",
-                      border: "none",
-                      borderRadius: 10,
-                      cursor: "pointer",
-                      fontWeight: 700,
-                    }}
+                    disabled={loading}
+                    className={`px-6 py-3 rounded-xl font-semibold transition-all ${
+                      loading 
+                        ? "bg-gray-300 text-gray-500 cursor-not-allowed opacity-70"
+                        : "bg-orange-500 text-white hover:bg-orange-600 active:scale-[0.98]"
+                    }`}
                   >
                     애매 (Good)
                   </button>
                   <button
                     onClick={() => submit("perfect")}
-                    style={{
-                      padding: "12px 20px",
-                      background: "#38a169",
-                      color: "white",
-                      border: "none",
-                      borderRadius: 10,
-                      cursor: "pointer",
-                      fontWeight: 700,
-                    }}
+                    disabled={loading}
+                    className={`px-6 py-3 rounded-xl font-semibold transition-all ${
+                      loading 
+                        ? "bg-gray-300 text-gray-500 cursor-not-allowed opacity-70"
+                        : "bg-green-500 text-white hover:bg-green-600 active:scale-[0.98]"
+                    }`}
                   >
                     완벽함 (Perfect)
                   </button>
@@ -373,6 +294,29 @@ export default function RemindPage() {
           </div>
         </div>
       </div>
+
+      {/* Bottom Navigation */}
+      <nav className="fixed bottom-0 left-0 right-0 bg-white/90 backdrop-blur-xl shadow-[0_-0.5px_0_0_rgba(0,0,0,0.1)] px-6 pb-8 pt-3 flex justify-between items-center z-50">
+        <button 
+          onClick={handleBackToDashboard}
+          className="flex flex-col items-center gap-1 text-gray-400"
+        >
+          <span className="material-symbols-outlined">home</span>
+          <span className="text-[10px] font-medium">홈</span>
+        </button>
+        <button className="flex flex-col items-center gap-1 text-gray-400">
+          <span className="material-symbols-outlined">menu_book</span>
+          <span className="text-[10px] font-medium">학습</span>
+        </button>
+        <button className="flex flex-col items-center gap-1 text-blue-600">
+          <span className="material-symbols-outlined">history</span>
+          <span className="text-[10px] font-bold">리마인드</span>
+        </button>
+        <button className="flex flex-col items-center gap-1 text-gray-400">
+          <span className="material-symbols-outlined">person</span>
+          <span className="text-[10px] font-medium">프로필</span>
+        </button>
+      </nav>
     </div>
   );
 }
