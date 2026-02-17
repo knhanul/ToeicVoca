@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import { BookOpen, RefreshCw, ChevronRight, User, Bell, Award, ArrowLeft, Home, History } from "lucide-react";
 import BoldMarkup from "../components/BoldMarkup.jsx";
 
-const API_BASE = import.meta.env.VITE_API_BASE || "/hackersvoca/api";
+const API_BASE = "http://localhost:4000/api"; // Force direct connection
 
 export default function RemindPage() {
   const [card, setCard] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [revealMeaning, setRevealMeaning] = useState(false);
+  const [revealExample, setRevealExample] = useState(false);
   const [user, setUser] = useState(null);
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -43,7 +45,7 @@ export default function RemindPage() {
       setSelectedLevel(fromQuery);
       localStorage.setItem("selectedDifficultyLevel", fromQuery);
     }
-  }, [searchParams, selectedLevel]);
+  }, [searchParams, selectedLevel, setSelectedLevel]);
 
   const userId = useMemo(() => user?.id || 1, [user]);
 
@@ -51,7 +53,7 @@ export default function RemindPage() {
     setLoading(true);
     setError(null);
     setRevealMeaning(false);
-    // setCard(null)을 여기서 바로 호출하지 않음 (깜빡임 방지)
+    setRevealExample(false);
 
     const qs = new URLSearchParams({ user_id: String(userId), difficulty_level: selectedLevel });
 
@@ -71,12 +73,9 @@ export default function RemindPage() {
       })
       .catch((e) => {
         console.error("Load remind card error:", e);
-        // 에러 발생 시에만 카드를 null로 설정
         setCard(null);
         setError(e.message);
-        // 404 에러(리마인드할 단어 없음)는 재시도하지 않음
         if (!e.message.includes("리마인드할 단어가 없습니다")) {
-          // 다른 에러만 1초 후 다시 시도
           setTimeout(() => {
             loadNext();
           }, 1000);
@@ -87,17 +86,15 @@ export default function RemindPage() {
 
   useEffect(() => {
     if (user) {
-      // 초기 로드 시에만 카드를 null로 설정하지 않고 로딩 상태만 설정
       setLoading(true);
       loadNext();
     }
-  }, [user]); // loadNext 의존성 제거
+  }, [user]); // loadNext 제거
 
   const handleChangeLevel = (levelValue) => {
     setSelectedLevel(levelValue);
     localStorage.setItem("selectedDifficultyLevel", levelValue);
     setSearchParams({ difficulty_level: levelValue });
-    // 레벨 변경 시에만 카드 초기화
     setCard(null);
   };
 
@@ -120,244 +117,287 @@ export default function RemindPage() {
         return r.json();
       })
       .then(() => {
-        // 성공 시 다음 카드 로드
         loadNext();
       })
       .catch((e) => {
         console.error("Remind review error:", e);
-        // 에러 발생 시 에러 메시지만 설정
         setError(e.message);
         setCard(null);
-        // 제출 에러는 자동 재시도하지 않음 (사용자가 직접 새로고침하도록)
       })
       .finally(() => setLoading(false));
   };
 
   const handleBackToDashboard = () => {
-    // 대시보드 데이터 새로고침을 위해 localStorage에 타임스탬프 저장
     localStorage.setItem('dashboard_refresh', Date.now().toString());
     navigate("/dashboard");
   };
 
+  const handleStudyPage = () => {
+    navigate("/study");
+  };
+
   if (!user) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <div className="min-h-screen bg-[#F8F9FA] flex items-center justify-center">
         <div>로딩 중...</div>
       </div>
     );
   }
 
-  const getLevelColor = (levelValue) => {
-    const level = levels.find(l => l.value === levelValue);
-    return level ? level.color : "blue";
-  };
-
-  const getLevelBadge = (levelValue) => {
-    const level = levels.find(l => l.value === levelValue);
-    return level ? level.badge : "BEGINNER";
-  };
-
   return (
-    <div className="min-h-screen bg-gray-50 pb-20">
-      {/* Header */}
-      <header className="sticky top-0 z-50 bg-white/80 backdrop-blur-md px-5 py-4 flex items-center justify-between">
+    <div className="min-h-screen bg-[#F8F9FA] pb-24">
+      {/* 1. 상단 헤더: 사용자 정보와 알림 */}
+      <div className="sticky top-0 z-50 bg-white/80 backdrop-blur-md px-6 py-4 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <button
             onClick={handleBackToDashboard}
-            className="bg-none border-none text-[20px] cursor-pointer text-blue-600"
+            className="p-2 bg-white rounded-xl shadow-sm border border-gray-100"
           >
-            <span className="material-symbols-outlined">arrow_back</span>
+            <ArrowLeft size={20} className="text-gray-700" />
           </button>
-          <h1 className="text-lg font-bold text-gray-900">리마인드 학습</h1>
-        </div>
-        <div className="flex items-center gap-3 flex-wrap">
-          <div className="flex gap-2 flex-wrap">
-            {levels.map((l) => (
-              <button
-                key={l.value}
-                onClick={() => handleChangeLevel(l.value)}
-                className={`px-3 py-1.5 rounded-full border text-xs font-medium transition-colors ${
-                  selectedLevel === l.value
-                    ? `border-${l.color}-500 bg-${l.color}-50 text-${l.color}-600 font-bold`
-                    : "border-gray-200 bg-white text-gray-500"
-                }`}
-              >
-                {l.label}
-              </button>
-            ))}
-          </div>
-          <div className="text-sm text-gray-600">
-            {user.username}님
-          </div>
-        </div>
-      </header>
-
-      <div className="px-5 mt-4 max-w-md mx-auto">
-        <div className="bg-white rounded-[24px] p-6 shadow-[0_10px_25px_-5px_rgba(0,0,0,0.05),0_8px_10px_-6px_rgba(0,0,0,0.05)] border border-gray-100/50">
-          <div className="flex justify-between items-center mb-6">
-            <h2 className="text-xl font-bold text-gray-900">리마인드 학습</h2>
-            <div className="text-sm text-gray-500">
-              최근 7일간 학습한 단어 복습
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-orange-500 to-red-600 flex items-center justify-center">
+              <RefreshCw size={18} className="text-white" />
+            </div>
+            <div>
+              <div className="text-xs text-gray-500">복습 시간!</div>
+              <div className="text-lg font-bold text-gray-900">{user.username || '학습자'} 님</div>
             </div>
           </div>
+        </div>
+        <button className="p-2 bg-white rounded-xl shadow-sm border border-gray-100">
+          <Bell size={20} className="text-gray-700" />
+        </button>
+      </div>
 
-          {/* Error Display */}
-          {error ? (
-            <div className="bg-red-50 border border-red-100 rounded-xl p-4 mb-6">
-              <div className="text-red-700 text-sm mb-3">{error}</div>
+      <div className="px-6 mt-6">
+        {/* 2. 메인 액션 섹션: 학습하기 & 리마인드 (가장 크게 강조) */}
+        <div className="flex gap-4 mb-8">
+          <button 
+            onClick={handleStudyPage}
+            className="flex-1 bg-white p-6 rounded-3xl shadow-md border border-gray-100"
+          >
+            <BookOpen size={32} className="text-indigo-500" />
+            <div className="mt-4">
+              <div className="text-xl font-bold text-gray-900">학습하기</div>
+              <div className="text-sm text-gray-500 mt-1">새로운 단어</div>
+            </div>
+          </button>
+
+          <button 
+            onClick={() => {/* 현재 페이지 */}}
+            className="flex-1 bg-gradient-to-br from-orange-500 to-red-600 p-6 rounded-3xl shadow-lg shadow-orange-500/25 text-white"
+          >
+            <RefreshCw size={32} />
+            <div className="mt-4">
+              <div className="text-xl font-bold">리마인드</div>
+              <div className="text-sm text-orange-100 mt-1">복습하기</div>
+            </div>
+          </button>
+        </div>
+
+        {/* 4. Day Topic */}
+        {card?.vocab?.topic ? (
+          <div className="bg-gradient-to-r from-orange-50 to-amber-50 rounded-3xl p-6 mb-6 border border-orange-100">
+            <div className="text-center">
+              <div className="text-sm font-bold text-orange-800">
+                Day {card.vocab.day} 주제: {card.vocab.topic}
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {/* 5. 메인 카드 */}
+        <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
+          {loading && !card ? (
+            <div className="p-8 text-center">
+              <div className="text-gray-500">로딩 중...</div>
+            </div>
+          ) : error ? (
+            <div className="p-8 text-center">
+              <div className="text-red-600 mb-4">{error}</div>
               {!error.includes("리마인드할 단어가 없습니다") && (
                 <button
                   onClick={() => {
                     setError(null);
                     loadNext();
                   }}
-                  className="bg-red-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-red-700 transition-colors"
+                  className="bg-orange-500 text-white px-6 py-3 rounded-2xl font-semibold shadow-md"
                 >
                   다시 시도
                 </button>
               )}
-            </div>
-          ) : null}
-
-          {/* Main Card */}
-          <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-[0_1px_4px_rgba(0,0,0,0.06)] relative">
-            {loading && !card ? (
-              <div className="text-center py-10">
-                <div className="text-gray-500">로딩 중...</div>
-              </div>
-            ) : !card ? (
-              <div className="text-center py-8">
-                <div className="text-lg font-bold text-gray-900 mb-2">
-                  리마인드할 단어가 없습니다.
-                </div>
-                <div className="text-gray-500 text-sm mb-4">
-                  최근 7일간 학습한 단어만 대상입니다.
-                </div>
+              {error.includes("리마인드할 단어가 없습니다") && (
                 <button
                   onClick={handleBackToDashboard}
-                  className="bg-blue-600 text-white px-6 py-3 rounded-xl font-semibold hover:bg-blue-700 transition-colors"
+                  className="bg-gradient-to-r from-orange-500 to-red-600 text-white px-8 py-4 rounded-2xl font-semibold shadow-lg shadow-orange-500/25"
                 >
                   대시보드로 돌아가기
                 </button>
+              )}
+            </div>
+          ) : !card && !error ? (
+            <div className="p-8 text-center">
+              <div className="text-xl font-bold text-gray-900 mb-3">
+                리마인드할 단어가 없습니다.
               </div>
-            ) : (
-              <div>
-                {/* Loading overlay */}
-                {loading && (
-                  <div className="absolute inset-0 bg-white bg-opacity-75 flex items-center justify-center z-10 rounded-xl">
-                    <div className="text-gray-500">처리 중...</div>
+              <div className="text-gray-500 text-sm mb-6">
+                최근 7일간 학습한 단어만 대상입니다.
+              </div>
+              <button
+                onClick={handleBackToDashboard}
+                className="bg-gradient-to-r from-orange-500 to-red-600 text-white px-8 py-4 rounded-2xl font-semibold shadow-lg shadow-orange-500/25"
+              >
+                대시보드로 돌아가기
+              </button>
+            </div>
+          ) : card?.vocab ? (
+            <div className="p-6">
+              {/* Word Header */}
+              <div className="flex justify-between items-start gap-4 mb-6">
+                <div className="flex-1">
+                  <div className="text-3xl font-bold text-gray-900 leading-tight">
+                    {card.vocab.word}
                   </div>
-                )}
-                {/* Day Topic */}
-                {card.vocab.topic ? (
-                  <div className="bg-orange-50 border border-orange-100 rounded-xl p-4 mb-6">
-                    <div className="text-center">
-                      <div className="text-sm font-bold text-orange-800">
-                        Day {card.vocab.day} 주제: {card.vocab.topic}
-                      </div>
-                    </div>
-                  </div>
-                ) : null}
-
-                {/* Word */}
-                <div className="text-3xl font-bold text-gray-900 text-center mb-6">
-                  {card.vocab.word}
                 </div>
+                <div className="text-right text-sm text-gray-500 bg-gray-50 px-3 py-2 rounded-xl">
+                  <div>Day {card.vocab.day ?? "-"}</div>
+                  <div>{card.vocab.difficulty_level ?? "-"}</div>
+                </div>
+              </div>
 
-                {/* Meaning */}
-                <div className="text-lg text-gray-700 text-center mb-5">
-                  {revealMeaning ? (
-                    <BoldMarkup>{card.vocab.meaning}</BoldMarkup>
+              {/* Pronunciation */}
+              {card.vocab.pronunciation && (
+                <div className="mb-6 text-center text-gray-500 italic">
+                  [{card.vocab.pronunciation}]
+                </div>
+              )}
+
+              {/* Example Sentence (toggleable) */}
+              {card.vocab.example_en ? (
+                <div
+                  onClick={() => setRevealExample(true)}
+                  className={`p-4 rounded-2xl border-2 cursor-pointer transition-all duration-300 mb-6 ${
+                    revealExample 
+                      ? "bg-gradient-to-br from-blue-50 to-indigo-50 border-blue-200" 
+                      : "bg-gray-50 border-gray-200 hover:bg-gray-100"
+                  }`}
+                  title="클릭하여 예문 보기"
+                >
+                  {revealExample ? (
+                    <div className="leading-relaxed text-gray-700 italic">
+                      <BoldMarkup text={card.vocab.example_en} />
+                    </div>
                   ) : (
-                    <button
-                      onClick={() => setRevealMeaning(true)}
-                      className="bg-blue-600 text-white px-6 py-2.5 rounded-xl font-semibold hover:bg-blue-700 transition-colors"
-                    >
-                      의미 보기
-                    </button>
+                    <div className="text-gray-500 text-center py-4">
+                      예문 보기 (클릭)
+                    </div>
                   )}
                 </div>
+              ) : null}
 
-                {/* Example */}
-                {revealMeaning && (card.vocab.example_en || card.vocab.example_kr) ? (
-                  <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 mb-5">
-                    {card.vocab.example_en ? (
-                      <div className="mb-2 italic text-gray-800">
-                        <BoldMarkup text={card.vocab.example_en} />
-                      </div>
-                    ) : null}
+              {/* Meaning Card */}
+              <div
+                onClick={() => setRevealMeaning(true)}
+                className={`p-6 rounded-2xl border-2 cursor-pointer transition-all duration-300 ${
+                  revealMeaning 
+                    ? "bg-gradient-to-br from-orange-50 to-red-50 border-orange-200" 
+                    : "bg-gray-50 border-gray-200 hover:bg-gray-100"
+                }`}
+                title="클릭하여 뜻 보기"
+              >
+                {revealMeaning ? (
+                  <div className="text-lg">
+                    {card.vocab.meaning}
                     {card.vocab.example_kr ? (
-                      <div className="text-gray-600">
+                      <div className="mt-3 text-gray-600">
                         <BoldMarkup text={card.vocab.example_kr} />
                       </div>
                     ) : null}
                   </div>
-                ) : null}
-
-                {/* Action Buttons */}
-                <div className="flex gap-3 justify-center">
-                  <button
-                    onClick={() => submit("again")}
-                    disabled={loading}
-                    className={`px-6 py-3 rounded-xl font-semibold transition-all ${
-                      loading 
-                        ? "bg-gray-300 text-gray-500 cursor-not-allowed opacity-70"
-                        : "bg-red-500 text-white hover:bg-red-600 active:scale-[0.98]"
-                    }`}
-                  >
-                    모름 (Again)
-                  </button>
-                  <button
-                    onClick={() => submit("good")}
-                    disabled={loading}
-                    className={`px-6 py-3 rounded-xl font-semibold transition-all ${
-                      loading 
-                        ? "bg-gray-300 text-gray-500 cursor-not-allowed opacity-70"
-                        : "bg-orange-500 text-white hover:bg-orange-600 active:scale-[0.98]"
-                    }`}
-                  >
-                    애매 (Good)
-                  </button>
-                  <button
-                    onClick={() => submit("perfect")}
-                    disabled={loading}
-                    className={`px-6 py-3 rounded-xl font-semibold transition-all ${
-                      loading 
-                        ? "bg-gray-300 text-gray-500 cursor-not-allowed opacity-70"
-                        : "bg-green-500 text-white hover:bg-green-600 active:scale-[0.98]"
-                    }`}
-                  >
-                    완벽함 (Perfect)
-                  </button>
-                </div>
+                ) : (
+                  <div className="text-gray-500 text-center py-4">
+                    뜻 보기 (클릭)
+                  </div>
+                )}
               </div>
-            )}
-          </div>
+
+              {/* Action Buttons */}
+              <div className="flex gap-3 mt-6">
+                <button
+                  onClick={() => submit("again")}
+                  disabled={loading}
+                  className={`flex-1 py-4 rounded-2xl font-semibold transition-all ${
+                    loading 
+                      ? "bg-gray-200 text-gray-400 cursor-not-allowed"
+                      : "bg-red-500 text-white hover:bg-red-600 active:scale-[0.98] shadow-md"
+                  }`}
+                >
+                  몰라요
+                </button>
+                <button
+                  onClick={() => submit("good")}
+                  disabled={loading}
+                  className={`flex-1 py-4 rounded-2xl font-semibold transition-all ${
+                    loading 
+                      ? "bg-gray-200 text-gray-400 cursor-not-allowed"
+                      : "bg-orange-500 text-white hover:bg-orange-600 active:scale-[0.98] shadow-md"
+                  }`}
+                >
+                  애매해요
+                </button>
+                <button
+                  onClick={() => submit("perfect")}
+                  disabled={loading}
+                  className={`flex-1 py-4 rounded-2xl font-semibold transition-all ${
+                    loading 
+                      ? "bg-gray-200 text-gray-400 cursor-not-allowed"
+                      : "bg-green-500 text-white hover:bg-green-600 active:scale-[0.98] shadow-md"
+                  }`}
+                >
+                  알아요
+                </button>
+              </div>
+
+              {/* Loading overlay */}
+              {loading && (
+                <div className="absolute inset-0 bg-white bg-opacity-75 flex items-center justify-center z-10 rounded-3xl">
+                  <div className="text-gray-500">처리 중...</div>
+                </div>
+              )}
+            </div>
+          ) : null}
+        </div>
+
+              </div>
+
+      {/* 7. iOS 스타일 하단 네비게이션 바 */}
+      <div className="fixed bottom-0 left-0 right-0 bg-white/90 backdrop-blur-xl border-t border-gray-100 px-6 py-4">
+        <div className="flex justify-around">
+          <button 
+            onClick={handleBackToDashboard}
+            className="flex flex-col items-center gap-1 text-gray-400"
+          >
+            <Home size={20} />
+            <span className="text-xs font-medium">홈</span>
+          </button>
+          <button 
+            onClick={handleStudyPage}
+            className="flex flex-col items-center gap-1 text-gray-400"
+          >
+            <BookOpen size={20} />
+            <span className="text-xs font-medium">학습</span>
+          </button>
+          <button className="flex flex-col items-center gap-1 text-orange-600">
+            <RefreshCw size={20} />
+            <span className="text-xs font-bold">리마인드</span>
+          </button>
+          <button className="flex flex-col items-center gap-1 text-gray-400">
+            <User size={20} />
+            <span className="text-xs font-medium">프로필</span>
+          </button>
         </div>
       </div>
-
-      {/* Bottom Navigation */}
-      <nav className="fixed bottom-0 left-0 right-0 bg-white/90 backdrop-blur-xl shadow-[0_-0.5px_0_0_rgba(0,0,0,0.1)] px-6 pb-8 pt-3 flex justify-between items-center z-50">
-        <button 
-          onClick={handleBackToDashboard}
-          className="flex flex-col items-center gap-1 text-gray-400"
-        >
-          <span className="material-symbols-outlined">home</span>
-          <span className="text-[10px] font-medium">홈</span>
-        </button>
-        <button className="flex flex-col items-center gap-1 text-gray-400">
-          <span className="material-symbols-outlined">menu_book</span>
-          <span className="text-[10px] font-medium">학습</span>
-        </button>
-        <button className="flex flex-col items-center gap-1 text-blue-600">
-          <span className="material-symbols-outlined">history</span>
-          <span className="text-[10px] font-bold">리마인드</span>
-        </button>
-        <button className="flex flex-col items-center gap-1 text-gray-400">
-          <span className="material-symbols-outlined">person</span>
-          <span className="text-[10px] font-medium">프로필</span>
-        </button>
-      </nav>
     </div>
   );
 }

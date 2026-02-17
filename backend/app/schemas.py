@@ -167,6 +167,7 @@ class LevelStatsOut(BaseModel):
     day_progress_pct: int
     total_vocab: int
     perfect_vocab: int
+    previous_cycle_perfect_vocab: int
     memorization_pct: int
     day_word_counts: list[DayWordCountsOut]
     recent_study: list[RecentStudyOut]
@@ -183,4 +184,5 @@ class CurrentDayProgressOut(BaseModel):
     day: int | None
     total_words: int
     progressed_words: int
+    perfect_words: int
     progress_pct: int

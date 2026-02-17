@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Body
 from sqlalchemy import (
     select,
     insert,
@@ -543,10 +543,41 @@ def complete_day(payload: OpenDayIn, db: Session = Depends(get_db)):
     )
 
 
+@api_router.get("/user/exclude-perfect-settings")
+def get_exclude_perfect_settings(
+    user_id: int = Query(...),
+    db: Session = Depends(get_db),
+):
+    user = db.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="user not found")
+    
+    return {
+        "exclude_perfect_settings": user.exclude_perfect_settings or {}
+    }
+
+
+@api_router.post("/user/exclude-perfect-settings")
+def update_exclude_perfect_settings(
+    user_id: int = Query(...),
+    settings: dict = Body(...),
+    db: Session = Depends(get_db),
+):
+    user = db.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="user not found")
+    
+    user.exclude_perfect_settings = settings
+    db.commit()
+    
+    return {"message": "Settings updated successfully"}
+
+
 @api_router.get("/cards/today", response_model=CardOut)
 def get_today_card(
     user_id: int = Query(...),
     difficulty_level: str = Query(...),
+    exclude_perfect: bool = Query(False),
     db: Session = Depends(get_db),
 ):
     user = db.get(User, user_id)
@@ -591,6 +622,7 @@ def get_today_card(
         )
 
     # 2) new cards for this level+day (exclude progress for current cycle)
+    # If exclude_perfect is True, also exclude words that have perfect status in current cycle
     vocab_stmt = (
         select(Vocab)
         .where(and_(Vocab.difficulty_level == difficulty_level, Vocab.day == open_day.day))
@@ -601,9 +633,28 @@ def get_today_card(
                 )
             )
         )
-        .order_by(Vocab.id.asc())
-        .limit(1)
     )
+    
+    # Add exclude_perfect filter if enabled
+    if exclude_perfect:
+        # Get perfect words from previous cycle's study logs (not current cycle)
+        previous_cycle_no = cycle.cycle_no - 1
+        if previous_cycle_no > 0:
+            perfect_words_subq = (
+                select(StudyLog.vocab_id)
+                .where(
+                    and_(
+                        StudyLog.user_id == user_id,
+                        StudyLog.cycle_no == previous_cycle_no,
+                        StudyLog.difficulty_level == difficulty_level,
+                        StudyLog.result == "perfect"
+                    )
+                )
+                .distinct()
+            )
+            vocab_stmt = vocab_stmt.where(~Vocab.id.in_(perfect_words_subq))
+    
+    vocab_stmt = vocab_stmt.order_by(Vocab.id.asc()).limit(1)
     vocab = db.execute(vocab_stmt).scalar_one_or_none()
     if vocab is None:
         # 현재 Day의 모든 단어를 학습했는지 확인
@@ -1541,6 +1592,24 @@ def get_levels_stats(user_id: int = Query(...), db: Session = Depends(get_db)):
                 )
             )
 
+        # Count perfect words from previous cycle for level stats
+        previous_cycle_no = cycle.cycle_no - 1
+        if previous_cycle_no > 0:
+            previous_cycle_perfect_vocab = db.execute(
+                select(func.count(StudyLog.vocab_id))
+                .join(Vocab, StudyLog.vocab_id == Vocab.id)
+                .where(
+                    and_(
+                        StudyLog.user_id == user_id,
+                        StudyLog.cycle_no == previous_cycle_no,
+                        StudyLog.difficulty_level == level,
+                        StudyLog.result == "perfect"
+                    )
+                )
+            ).scalar_one()
+        else:
+            previous_cycle_perfect_vocab = 0
+
         levels_out.append(
             LevelStatsOut(
                 difficulty_level=level,
@@ -1549,6 +1618,7 @@ def get_levels_stats(user_id: int = Query(...), db: Session = Depends(get_db)):
                 day_progress_pct=int(day_progress_pct),
                 total_vocab=int(total_vocab),
                 perfect_vocab=int(perfect_vocab),
+                previous_cycle_perfect_vocab=int(previous_cycle_perfect_vocab),
                 memorization_pct=int(memorization_pct),
                 day_word_counts=day_word_counts,
                 recent_study=recent_study,
@@ -1576,6 +1646,7 @@ def get_current_day_progress(
 
     total_words = 0
     progressed_words = 0
+    perfect_words = 0
 
     if day_val is not None:
         total_words = db.execute(
@@ -1597,6 +1668,25 @@ def get_current_day_progress(
             )
         ).scalar_one()
 
+        # Count perfect words from study logs for previous cycle (not current cycle)
+        previous_cycle_no = cycle.cycle_no - 1
+        if previous_cycle_no > 0:
+            perfect_words = db.execute(
+                select(func.count(StudyLog.vocab_id))
+                .join(Vocab, StudyLog.vocab_id == Vocab.id)
+                .where(
+                    and_(
+                        StudyLog.user_id == user_id,
+                        StudyLog.cycle_no == previous_cycle_no,
+                        StudyLog.difficulty_level == difficulty_level,
+                        Vocab.day == day_val,
+                        StudyLog.result == "perfect"
+                    )
+                )
+            ).scalar_one()
+        else:
+            perfect_words = 0  # No previous cycle
+
     progress_pct = 0
     if int(total_words) > 0:
         progress_pct = int((int(progressed_words) / int(total_words)) * 100)
@@ -1607,5 +1697,6 @@ def get_current_day_progress(
         day=day_val,
         total_words=int(total_words),
         progressed_words=int(progressed_words),
+        perfect_words=int(perfect_words),
         progress_pct=int(progress_pct),
     )

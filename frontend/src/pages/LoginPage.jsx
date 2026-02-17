@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
-const API_BASE = import.meta.env.VITE_API_BASE || "/hackersvoca/api";
+const API_BASE = "http://localhost:4000/api"; // Force direct connection
+console.log("API_BASE:", API_BASE);
 
 export default function LoginPage() {
   const [formData, setFormData] = useState({
@@ -12,12 +13,15 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const navigate = useNavigate();
 
-  const handleSubmit = async (e) => {
+  const handleLogin = async (e) => {
     e.preventDefault();
     setLoading(true);
-    setError("");
+    setError(null);
 
     try {
+      console.log("Attempting login to:", `${API_BASE}/login`);
+      console.log("Login data:", { username: formData.username, password: "***" });
+      
       const response = await fetch(`${API_BASE}/login`, {
         method: "POST",
         headers: {
@@ -29,7 +33,13 @@ export default function LoginPage() {
         }),
       });
 
+      console.log("Response status:", response.status);
+      console.log("Response ok:", response.ok);
+
       if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        console.log("Error response:", errorData);
+        
         if (response.status === 404) {
           setError("사용자가 존재하지 않습니다. 먼저 회원가입을 해주세요.");
           return;
@@ -43,9 +53,11 @@ export default function LoginPage() {
       }
 
       const user = await response.json();
+      console.log("Login successful:", user);
       localStorage.setItem("user", JSON.stringify({ id: user.id, username: user.username }));
       navigate("/dashboard");
     } catch (err) {
+      console.error("Login error:", err);
       setError("로그인에 실패했습니다.");
     } finally {
       setLoading(false);
@@ -104,7 +116,7 @@ export default function LoginPage() {
           </div>
         )}
 
-        <form onSubmit={handleSubmit}>
+        <form onSubmit={handleLogin}>
           <div style={{ marginBottom: 16 }}>
             <label style={{
               display: "block",
@@ -119,6 +131,7 @@ export default function LoginPage() {
               name="username"
               value={formData.username}
               onChange={handleChange}
+              autoComplete="username"
               style={{
                 width: "100%",
                 padding: "12px 16px",
@@ -145,6 +158,7 @@ export default function LoginPage() {
               name="password"
               value={formData.password}
               onChange={handleChange}
+              autoComplete="current-password"
               style={{
                 width: "100%",
                 padding: "12px 16px",

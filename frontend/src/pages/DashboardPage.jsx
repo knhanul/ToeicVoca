@@ -1,7 +1,7 @@
 import { useMemo, useState, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
-const API_BASE = import.meta.env.VITE_API_BASE || "/hackersvoca/api";
+const API_BASE = "http://localhost:4000/api"; // Force direct connection
 
 export default function DashboardPage() {
   const [user, setUser] = useState(null);
@@ -26,6 +26,55 @@ export default function DashboardPage() {
     () => localStorage.getItem("selectedDifficultyLevel") || "800"
   );
 
+  const [excludePerfect, setExcludePerfect] = useState(
+    () => localStorage.getItem("excludePerfect") === "true"
+  );
+
+  // Toggle Perfect words exclusion
+  const toggleExcludePerfect = async () => {
+    const newValue = !excludePerfect;
+    setExcludePerfect(newValue);
+    localStorage.setItem("excludePerfect", String(newValue));
+    
+    // Save to backend
+    if (user) {
+      try {
+        const qs = new URLSearchParams({ user_id: String(user.id) });
+        const r = await fetch(`${API_BASE}/user/exclude-perfect-settings?${qs.toString()}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ global: newValue }),
+        });
+        if (!r.ok) {
+          throw new Error("Failed to save settings");
+        }
+      } catch (e) {
+        console.error("Failed to save exclude perfect settings:", e);
+      }
+    }
+  };
+
+  // Load exclude perfect setting from backend
+  useEffect(() => {
+    if (user) {
+      const loadSettings = async () => {
+        try {
+          const qs = new URLSearchParams({ user_id: String(user.id) });
+          const r = await fetch(`${API_BASE}/user/exclude-perfect-settings?${qs.toString()}`);
+          if (r.ok) {
+            const data = await r.json();
+            const globalSetting = data.exclude_perfect_settings?.global || false;
+            setExcludePerfect(globalSetting);
+            localStorage.setItem("excludePerfect", String(globalSetting));
+          }
+        } catch (e) {
+          console.warn("Failed to load exclude perfect settings:", e);
+        }
+      };
+      loadSettings();
+    }
+  }, [user]);
+
   useEffect(() => {
     const userData = localStorage.getItem("user");
     if (!userData) {
@@ -40,6 +89,17 @@ export default function DashboardPage() {
       loadStats();
     }
   }, [user]);
+
+  // Debug logging for stats data
+  useEffect(() => {
+    if (stats) {
+      console.log("Stats data:", stats);
+      console.log("Levels data:", stats.levels);
+      stats.levels?.forEach((level, index) => {
+        console.log(`Level ${index}:`, level);
+      });
+    }
+  }, [stats]);
 
   // 페이지가 다시 보일 때 데이터 새로고침 (학습 후 돌아올 때)
   useEffect(() => {
@@ -96,11 +156,17 @@ export default function DashboardPage() {
           total: level.total_vocab || 0, // 총 단어 수
           studied: studiedWords, // 학습한 단어 수 (good + again + perfect)
           progress: level.total_vocab > 0 ? Math.round((studiedWords / level.total_vocab) * 100) : 0, // 학습률
+          completionRate: level.total_vocab > 0 ? Math.round((level.perfect_vocab / level.total_vocab) * 100) : 0, // 완성도 (Perfect 비율)
           cycles: level.cycle_no || 0, // 현재 학습 회차
           totalDays: level.total_days || 30, // Day 정보
           completedDays: level.completed_days || 0, // 완료된 Day 수
           studiedDays: studiedDays, // 학습한 Day 수
-          perfectWords: level.perfect_vocab || 0 // 완벽 마스터 단어 수
+          perfectWords: level.perfect_vocab || 0, // 완벽 마스터 단어 수
+          previousCyclePerfectWords: level.previous_cycle_perfect_vocab || 0, // 이전 회차 Perfect 단어 수
+          // 원본 API 데이터도 유지
+          day_progress_pct: level.day_progress_pct || 0,
+          memorization_pct: level.memorization_pct || 0,
+          difficulty_level: level.difficulty_level
         };
       });
       
@@ -317,6 +383,33 @@ export default function DashboardPage() {
         </div>
       </section>
 
+      {/* Level Selection - Prominent Section */}
+      <section className="px-5 mt-6 max-w-md mx-auto">
+        <div className="bg-gradient-to-r from-indigo-50 to-purple-50 rounded-2xl p-4 shadow-sm border border-indigo-100/50">
+          <div className="mb-2">
+            <h3 className="text-sm font-bold text-gray-900">학습 레벨 선택</h3>
+          </div>
+          <div className="flex gap-2 flex-wrap">
+            {levels.map((l) => (
+              <button
+                key={l.value}
+                onClick={() => handleChangeLevel(l.value)}
+                className={`px-2.5 py-1 rounded-full text-xs font-medium transition-all transform active:scale-[0.95] ${
+                  selectedLevel === l.value
+                    ? "bg-gradient-to-r from-indigo-500 to-purple-600 text-white shadow-sm shadow-indigo-500/25"
+                    : "bg-white text-gray-700 border border-gray-200 hover:border-indigo-300"
+                }`}
+              >
+                <div className="flex items-center gap-1">
+                  <span className="text-xs">{l.badge === 'BEGINNER' ? '🌱' : l.badge === 'INTERMEDIATE' ? '🚀' : '🏆'}</span>
+                  <span>{l.label}</span>
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+      </section>
+
       <main className="px-5 mt-6 max-w-md mx-auto space-y-8">
         {/* Quick Actions */}
         <section className="grid grid-cols-1 gap-4">
@@ -395,13 +488,34 @@ export default function DashboardPage() {
           <h3 className="text-lg font-bold text-gray-900 mb-4 px-1">레벨별 학습 현황</h3>
           <div className="space-y-4">
             {levels.map((l) => {
-              const levelData = stats?.levels?.find((lvl) => lvl.level === l.label);
+              const levelData = stats?.levels?.find((lvl) => lvl.difficulty_level === l.value);
               const progress = levelData?.progress ?? 0;
-              const studied = levelData?.studied ?? 0;
-              const total = levelData?.total ?? 500;
+              const completionRate = levelData?.completionRate ?? 0;
+              const total = levelData?.total ?? 0;
+              const perfect = levelData?.perfectWords ?? 0;
+              const previousCyclePerfect = levelData?.previousCyclePerfectWords ?? 0;
               const cycles = levelData?.cycles ?? 0;
+              const completedDays = levelData?.completedDays ?? 0;
               const isExpanded = expandedLevel === l.value;
               const detail = isExpanded ? detailStatsByLevel[String(l.value)] : null;
+              
+              // Debug logging for each level
+              console.log(`Level ${l.value} data:`, {
+                levelData,
+                progress,
+                total,
+                perfect,
+                previousCyclePerfect,
+                cycles,
+                completedDays,
+                levelDataKeys: Object.keys(levelData || {}),
+                levelDataFull: levelData
+              });
+              
+              // Calculate adjusted progress when Perfect exclusion is enabled
+              const adjustedProgress = excludePerfect && previousCyclePerfect > 0 
+                ? Math.round((progress * total) / Math.max(1, total - previousCyclePerfect))
+                : progress;
               
               return (
                 <div key={l.value} className="bg-white rounded-[24px] p-5 shadow-[0_4px_16px_rgba(0,0,0,0.04)] border border-gray-100/50">
@@ -413,21 +527,31 @@ export default function DashboardPage() {
                       <span className="text-base font-bold text-gray-900">{l.label}</span>
                       <span className="text-xs text-gray-500 ml-2">회차 {cycles}</span>
                     </div>
-                    <div className="text-lg font-bold text-gray-900">{progress}%</div>
+                    <div className="text-right">
+                      <div className="text-lg font-bold text-gray-900">
+                        {excludePerfect && previousCyclePerfect > 0 ? adjustedProgress : progress}%
+                      </div>
+                      <div className="text-xs text-gray-500">
+                        완성도 {completionRate}%
+                        {excludePerfect && previousCyclePerfect > 0 && (
+                          <span className="text-amber-600 ml-1">(Perfect 제외)</span>
+                        )}
+                      </div>
+                    </div>
                   </div>
                   
                   <div className="relative h-2 w-full bg-gray-100 rounded-full overflow-hidden mb-3">
                     <div 
-                      className={`absolute top-0 left-0 h-full bg-${l.color}-500 rounded-full`} 
-                      style={{ width: `${progress}%` }}
+                      className={`absolute top-0 left-0 h-full bg-${l.color}-500 rounded-full transition-all duration-500`} 
+                      style={{ width: `${excludePerfect && previousCyclePerfect > 0 ? adjustedProgress : progress}%` }}
                     />
                   </div>
                   
                   <div className="flex justify-between items-center text-[11px] text-gray-500 font-medium">
                     <div className="flex gap-3">
-                      <span>현재 Day {levelData?.completedDays + 1 || 1}</span>
-                      <span>학습 {studied}</span>
-                      <span>전체 {total}</span>
+                      <span>현재 Day {completedDays + 1}</span>
+                      <span>Perfect {perfect}</span>
+                      <span>전체 {excludePerfect && previousCyclePerfect > 0 ? `${total - previousCyclePerfect} (제외 ${previousCyclePerfect})` : total}</span>
                     </div>
                     <button
                       onClick={() => toggleLevelDetail(l.value)}
@@ -562,6 +686,40 @@ export default function DashboardPage() {
           </div>
         </section>
       </main>
+
+      {/* Perfect Words Exclusion Setting */}
+      <section className="px-5 mt-6 mb-24 max-w-md mx-auto">
+        <div className="bg-gradient-to-r from-amber-50 to-orange-50 rounded-2xl p-4 shadow-sm border border-amber-100/50">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div>
+                <span className="text-sm font-medium text-gray-700">
+                  Perfect 단어 제외
+                </span>
+                <p className="text-xs text-gray-500 mt-1">
+                  이전 회차까지 Perfect인 단어는 학습률 계산에서 제외
+                </p>
+              </div>
+            </div>
+            <label className="cursor-pointer">
+              <input
+                type="checkbox"
+                checked={excludePerfect || false}
+                onChange={toggleExcludePerfect}
+                className="hidden"
+              />
+              <div className="relative">
+                <div className={`w-11 h-6 rounded-full transition-colors ${
+                  excludePerfect ? 'bg-amber-500' : 'bg-gray-200'
+                }`}></div>
+                <div className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-transform ${
+                  excludePerfect ? 'translate-x-5' : 'translate-x-0'
+                }`}></div>
+              </div>
+            </label>
+          </div>
+        </div>
+      </section>
 
       {/* Bottom Navigation */}
       <nav className="fixed bottom-0 left-0 right-0 bg-white/90 backdrop-blur-xl shadow-[0_-0.5px_0_0_rgba(0,0,0,0.1)] px-6 pb-8 pt-3 flex justify-between items-center z-50">
