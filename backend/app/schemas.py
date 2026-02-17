@@ -26,6 +26,7 @@ class CardOut(BaseModel):
     leitner_level: int | None = None
     next_review_date: date | None = None
     is_mastered: bool | None = None
+    is_review: bool = False  # 이전 Day 복습 단어 여부
 
 
 ReviewGrade = Literal["perfect", "good", "again"]
@@ -48,6 +49,17 @@ class ReviewOut(BaseModel):
     next_review_date: date
     is_mastered: bool
 
+    studied_at: datetime
+
+
+class RemindReviewOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    user_id: int
+    vocab_id: int
+    grade: ReviewGrade
+
+    # 리마인드는 Leitner 정보 없음
     studied_at: datetime
 
 
@@ -144,6 +156,7 @@ class RecentStudyOut(BaseModel):
     topic: str | None = None
     result: ReviewGrade
     word: str | None = None
+    cycle_no: int | None = None
 
 
 class LevelStatsOut(BaseModel):

@@ -35,11 +35,12 @@ from ..schemas import (
     LevelStatusOut,
     OpenDayIn,
     OpenDayOut,
+    RemindReviewOut,
+    ReviewIn,
+    ReviewOut,
     StartNextCycleIn,
     StartNextCycleOut,
     RecentStudyOut,
-    ReviewIn,
-    ReviewOut,
     VocabOut,
 )
 
@@ -1078,6 +1079,14 @@ def submit_review(payload: ReviewIn, db: Session = Depends(get_db)):
         )
         cycle_no = cycle.cycle_no
 
+    # 현재 열린 Day 확인
+    open_day = _get_open_day(db, user_id=payload.user_id, difficulty_level=vocab.difficulty_level, cycle_no=cycle_no)
+    
+    # 이전 Day 복습 단어인지 확인
+    is_prev_day_review = False
+    if open_day and vocab.day and vocab.day < open_day.day:
+        is_prev_day_review = True
+
     progress_stmt = select(UserProgress).where(
         and_(
             UserProgress.user_id == payload.user_id,
@@ -1091,22 +1100,42 @@ def submit_review(payload: ReviewIn, db: Session = Depends(get_db)):
         db.add(progress)
         db.flush()
 
-    # Update Leitner scheduling
-    current_level = int(progress.leitner_level or 1)
+    # 이전 Day 복습 단어인 경우, Leitner 업데이트를 다르게 처리
+    if is_prev_day_review:
+        # 이전 Day 복습 단어는 현재 Day 진도에 반영되지 않도록 처리
+        if payload.grade == "again":
+            # 다음 날 다시 복습하도록 설정
+            new_level = int(progress.leitner_level or 1)
+            next_date = today + timedelta(days=1)  # 다음 날 복습
+            progress.correct_streak = 0
+            progress.wrong_count = int(progress.wrong_count or 0) + 1
+        elif payload.grade == "good":
+            # 3일 후 복습
+            new_level = min(int(progress.leitner_level or 1) + 1, LEITNER_MAX_LEVEL)
+            next_date = today + timedelta(days=3)
+            progress.correct_streak = int(progress.correct_streak or 0) + 1
+        else:  # perfect
+            # 7일 후 복습
+            new_level = min(int(progress.leitner_level or 1) + 1, LEITNER_MAX_LEVEL)
+            next_date = today + timedelta(days=7)
+            progress.correct_streak = int(progress.correct_streak or 0) + 1
+    else:
+        # 현재 Day 단어의 정상적인 Leitner 처리
+        current_level = int(progress.leitner_level or 1)
 
-    if payload.grade == "again":
-        new_level = 1
-        next_date = today
-        progress.correct_streak = 0
-        progress.wrong_count = int(progress.wrong_count or 0) + 1
-    elif payload.grade == "good":
-        new_level = min(current_level + 1, LEITNER_MAX_LEVEL)
-        next_date = next_review_date_for_level(new_level, today=today)
-        progress.correct_streak = int(progress.correct_streak or 0) + 1
-    else:  # perfect
-        new_level = min(current_level + 1, LEITNER_MAX_LEVEL)
-        next_date = next_review_date_for_level(new_level, today=today)
-        progress.correct_streak = int(progress.correct_streak or 0) + 1
+        if payload.grade == "again":
+            new_level = 1
+            next_date = today
+            progress.correct_streak = 0
+            progress.wrong_count = int(progress.wrong_count or 0) + 1
+        elif payload.grade == "good":
+            new_level = min(current_level + 1, LEITNER_MAX_LEVEL)
+            next_date = next_review_date_for_level(new_level, today=today)
+            progress.correct_streak = int(progress.correct_streak or 0) + 1
+        else:  # perfect
+            new_level = min(current_level + 1, LEITNER_MAX_LEVEL)
+            next_date = next_review_date_for_level(new_level, today=today)
+            progress.correct_streak = int(progress.correct_streak or 0) + 1
 
     progress.leitner_level = new_level
     progress.next_review_date = next_date
@@ -1138,7 +1167,7 @@ def submit_review(payload: ReviewIn, db: Session = Depends(get_db)):
     )
 
 
-@api_router.post("/review/remind", response_model=ReviewOut)
+@api_router.post("/review/remind", response_model=RemindReviewOut)
 def submit_remind_review(payload: ReviewIn, db: Session = Depends(get_db)):
     user = db.get(User, payload.user_id)
     if user is None:
@@ -1166,7 +1195,11 @@ def submit_remind_review(payload: ReviewIn, db: Session = Depends(get_db)):
         .limit(1)
     ).scalar_one_or_none()
     
-    cycle_no = latest_cycle if latest_cycle is not None else 1
+    # 이전 학습 기록이 없으면 에러 반환 (리마인드는 복습이므로 기존 기록이 있어야 함)
+    if latest_cycle is None:
+        raise HTTPException(status_code=400, detail="no previous study record found for this vocabulary")
+    
+    cycle_no = latest_cycle
 
     # UserProgress는 업데이트하지 않음 (리마인드는 복습이므로)
     # StudyLog만 추가하여 결과와 시간 기록
@@ -1184,13 +1217,10 @@ def submit_remind_review(payload: ReviewIn, db: Session = Depends(get_db)):
     db.commit()
 
     # 리마인드는 Leitner 정보를 반환하지 않음 (복습이므로)
-    return ReviewOut(
+    return RemindReviewOut(
         user_id=payload.user_id,
         vocab_id=payload.vocab_id,
         grade=payload.grade,
-        leitner_level=None,
-        next_review_date=None,
-        is_mastered=None,
         studied_at=now,
     )
 
@@ -1326,16 +1356,16 @@ def get_levels_stats(user_id: int = Query(...), db: Session = Depends(get_db)):
 
         day_progress_pct = int((int(completed_days) / 30) * 100)
 
-        # 암기율(Perfect 기반): 레벨 전체 단어 중 perfect 최종 판정 단어 수
+        # 암기율(Perfect 기반): 레벨 전체 단어 중 perfect 최종 판정 단어 수 (모든 회차의 최신 결과 기준)
         total_vocab = db.execute(select(func.count(Vocab.id)).where(Vocab.difficulty_level == level)).scalar_one()
 
+        # 모든 회차에서 각 단어별 최신 결과를 찾기
         latest_ts_subq = (
             select(StudyLog.vocab_id.label("vocab_id"), func.max(StudyLog.studied_at).label("max_ts"))
             .where(
                 and_(
                     StudyLog.user_id == user_id,
                     StudyLog.difficulty_level == level,
-                    StudyLog.cycle_no == cycle.cycle_no,
                 )
             )
             .group_by(StudyLog.vocab_id)
@@ -1468,12 +1498,16 @@ def get_levels_stats(user_id: int = Query(...), db: Session = Depends(get_db)):
                 )
             )
 
-        # 최근 학습 현황 (최근 20개)
+        # 회차별 내림차순, Day별 내림차순으로 정렬
+        day_word_counts.sort(key=lambda x: (x.cycle_no, x.day), reverse=True)
+
+        # 최근 학습 현황 (모든 회차에서 최신 20개)
         recent_rows = db.execute(
             select(
                 StudyLog.studied_at,
                 StudyLog.difficulty_level,
                 StudyLog.vocab_id,
+                StudyLog.cycle_no,
                 Vocab.day,
                 Vocab.topic,
                 StudyLog.result,
@@ -1484,22 +1518,22 @@ def get_levels_stats(user_id: int = Query(...), db: Session = Depends(get_db)):
                 and_(
                     StudyLog.user_id == user_id,
                     StudyLog.difficulty_level == level,
-                    StudyLog.cycle_no == cycle.cycle_no,
                     StudyLog.vocab_id.is_not(None),
                 )
             )
             .order_by(StudyLog.studied_at.desc())
-            .limit(20)
+            .limit(20)  # 최신 20개로 제한
         ).all()
 
         # word가 None이면 기본값 제공 (LEFT JOIN으로 이미 가져왔으므로 추가 쿼리 불필요)
         recent_study: list[RecentStudyOut] = []
-        for (ts, dl, vocab_id, day, topic, res, word) in recent_rows:
+        for (ts, dl, vocab_id, cycle_no, day, topic, res, word) in recent_rows:
             recent_study.append(
                 RecentStudyOut(
                     studied_at=ts,
                     difficulty_level=dl,
                     vocab_id=vocab_id,
+                    cycle_no=cycle_no,
                     day=day,
                     topic=topic,
                     result=res,

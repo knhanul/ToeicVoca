@@ -67,8 +67,14 @@ export default function ReviewPage() {
       setCard(data);
     })()
       .catch((e) => {
+        console.error("Load review card error:", e);
+        // 에러 발생 시 카드를 초기화하고 잠시 후 다시 시도
         setCard(null);
-        setError(e.message);
+        setError(null);
+        // 1초 후 다시 시도
+        setTimeout(() => {
+          loadNext();
+        }, 1000);
       })
       .finally(() => setLoading(false));
   }, [userId, selectedLevel]);
@@ -103,10 +109,15 @@ export default function ReviewPage() {
         }
         return r.json();
       })
-      .then(() => loadNext())
+      .then(() => {
+        // 성공 시 다음 카드 로드
+        loadNext();
+      })
       .catch((e) => {
-        setError(e.message);
-        setLoading(false);
+        console.error("Review error:", e);
+        // 에러 발생 시에도 다음 카드로 진행 (무한 루프 방지)
+        setError(null);
+        loadNext();
       });
   };
 

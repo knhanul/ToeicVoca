@@ -223,8 +223,14 @@ export default function StudyPage() {
       setCard(data);
     })()
       .catch((e) => {
+        console.error("Load next card error:", e);
+        // 에러 발생 시 카드를 초기화하고 잠시 후 다시 시도
         setCard(null);
-        setError(e.message);
+        setError(null);
+        // 1초 후 다시 시도
+        setTimeout(() => {
+          loadNext();
+        }, 1000);
       })
       .finally(() => setLoading(false));
   }, [userId, selectedLevel]);
@@ -259,10 +265,15 @@ export default function StudyPage() {
         }
         return r.json();
       })
-      .then(() => loadNext())
+      .then(() => {
+        // 성공 시 다음 카드 로드
+        loadNext();
+      })
       .catch((e) => {
-        setError(e.message);
-        setLoading(false);
+        console.error("Study review error:", e);
+        // 에러 발생 시에도 다음 카드로 진행 (무한 루프 방지)
+        setError(null);
+        loadNext();
       });
   };
 
@@ -404,8 +415,15 @@ export default function StudyPage() {
               <>
                 {/* Word Header */}
                 <div className="flex justify-between items-start gap-4 mb-6">
-                  <div className="text-3xl font-bold text-gray-900">
-                    {card.vocab.word}
+                  <div className="flex-1">
+                    {card.is_review && (
+                      <div className="inline-block bg-purple-100 text-purple-700 text-xs px-2 py-1 rounded-full font-medium mb-2">
+                        이전 Day 복습
+                      </div>
+                    )}
+                    <div className="text-3xl font-bold text-gray-900">
+                      {card.vocab.word}
+                    </div>
                   </div>
                   <div className="text-right text-sm text-gray-500">
                     <div>난이도: {card.vocab.difficulty_level ?? "-"}</div>

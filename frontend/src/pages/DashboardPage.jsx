@@ -85,25 +85,26 @@ export default function DashboardPage() {
       const totalWords = levelsData.reduce((sum, level) => sum + (level.total_vocab || 0), 0);
       const perfectWords = levelsData.reduce((sum, level) => sum + (level.perfect_vocab || 0), 0);
       
-      // 레벨별 데이터 변환 - recent_study 기반으로 실제 학습 단어 수 계산
+      // 레벨별 데이터 변환 - 전체 학습 건수 기반으로 계산
       const levelsStats = levelsData.map(level => {
-        const studiedWords = level.recent_study ? level.recent_study.length : 0;
+        // recent_study에서 고유 단어 ID만 추출 (학습한 단어 수)
+        const studiedWords = level.recent_study ? [...new Set(level.recent_study.map(s => s.vocab_id))].length : 0;
         const studiedDays = level.recent_study ? [...new Set(level.recent_study.map(s => s.day))].length : 0;
         
         return {
           level: levels.find(l => l.value === String(level.difficulty_level))?.label || `${level.difficulty_level}점대`,
           total: level.total_vocab || 0, // 총 단어 수
-          completed: studiedWords, // 실제 학습한 단어 수
-          progress: level.total_vocab > 0 ? Math.round((studiedWords / level.total_vocab) * 100) : 0,
-          cycles: level.cycle_no || 0,
+          studied: studiedWords, // 학습한 단어 수 (good + again + perfect)
+          progress: level.total_vocab > 0 ? Math.round((studiedWords / level.total_vocab) * 100) : 0, // 학습률
+          cycles: level.cycle_no || 0, // 현재 학습 회차
           totalDays: level.total_days || 30, // Day 정보
           completedDays: level.completed_days || 0, // 완료된 Day 수
           studiedDays: studiedDays, // 학습한 Day 수
-          perfectWords: level.perfect_vocab || 0
+          perfectWords: level.perfect_vocab || 0 // 완벽 마스터 단어 수
         };
       });
       
-      const totalStudiedWords = levelsStats.reduce((sum, level) => sum + level.completed, 0);
+      const totalStudiedWords = levelsStats.reduce((sum, level) => sum + level.studied, 0);
       
       setStats({
         totalWords,
@@ -396,26 +397,26 @@ export default function DashboardPage() {
             {levels.map((l) => {
               const levelData = stats?.levels?.find((lvl) => lvl.level === l.label);
               const progress = levelData?.progress ?? 0;
-              const completed = levelData?.completed ?? 0;
+              const studied = levelData?.studied ?? 0;
               const total = levelData?.total ?? 500;
+              const cycles = levelData?.cycles ?? 0;
               const isExpanded = expandedLevel === l.value;
               const detail = isExpanded ? detailStatsByLevel[String(l.value)] : null;
               
               return (
                 <div key={l.value} className="bg-white rounded-[24px] p-5 shadow-[0_4px_16px_rgba(0,0,0,0.04)] border border-gray-100/50">
-                  <div className="flex justify-between items-start mb-4">
+                  <div className="flex justify-between items-center mb-3">
                     <div>
-                      <span className={`text-[10px] font-bold bg-${l.color}-50 text-${l.color}-600 px-2 py-1 rounded-md mb-2 inline-block`}>
+                      <span className={`text-[10px] font-bold bg-${l.color}-50 text-${l.color}-600 px-2 py-1 rounded-md mr-2`}>
                         {l.badge}
                       </span>
-                      <h4 className="text-base font-bold text-gray-900">{l.label} 마스터</h4>
+                      <span className="text-base font-bold text-gray-900">{l.label}</span>
+                      <span className="text-xs text-gray-500 ml-2">회차 {cycles}</span>
                     </div>
-                    <div className="text-right">
-                      <span className="text-lg font-bold text-gray-900">{progress}%</span>
-                    </div>
+                    <div className="text-lg font-bold text-gray-900">{progress}%</div>
                   </div>
                   
-                  <div className="relative h-2 w-full bg-gray-100 rounded-full overflow-hidden mb-4">
+                  <div className="relative h-2 w-full bg-gray-100 rounded-full overflow-hidden mb-3">
                     <div 
                       className={`absolute top-0 left-0 h-full bg-${l.color}-500 rounded-full`} 
                       style={{ width: `${progress}%` }}
@@ -424,14 +425,15 @@ export default function DashboardPage() {
                   
                   <div className="flex justify-between items-center text-[11px] text-gray-500 font-medium">
                     <div className="flex gap-3">
-                      <span>완료 {completed}</span>
-                      <span>미완료 {total - completed}</span>
+                      <span>현재 Day {levelData?.completedDays + 1 || 1}</span>
+                      <span>학습 {studied}</span>
+                      <span>전체 {total}</span>
                     </div>
-                    <button 
+                    <button
                       onClick={() => toggleLevelDetail(l.value)}
-                      className="flex items-center text-blue-500 font-bold"
+                      className="text-blue-600 hover:text-blue-700 font-medium"
                     >
-                      상세보기 <span className="material-symbols-outlined text-[16px] ml-0.5">chevron_right</span>
+                      상세보기
                     </button>
                   </div>
 
@@ -476,8 +478,7 @@ export default function DashboardPage() {
                                   <div className="max-h-60 overflow-y-auto">
                                     <div className="space-y-2">
                                       {detail.day_word_counts
-                                        .slice()
-                                        .sort((a, b) => b.day - a.day)
+                                        .slice()  // API에서 이미 정렬된 순서 유지
                                         .map((d) => (
                                         <div
                                           key={d.day}
@@ -527,7 +528,10 @@ export default function DashboardPage() {
                                         <div className="flex-1">
                                           <div className="text-sm font-semibold text-gray-800">
                                             {r.word || `Day ${r.day || "?"}`}
-                                            {r.day && (
+                                            <span className="text-xs text-blue-600 font-normal ml-2">
+                                              Day {r.day} ({r.cycle_no}회독)
+                                            </span>
+                                            {r.topic && (
                                               <span className="text-xs text-gray-500 font-normal ml-2">
                                                 - {r.topic}
                                               </span>

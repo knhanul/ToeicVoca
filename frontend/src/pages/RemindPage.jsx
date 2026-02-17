@@ -51,7 +51,7 @@ export default function RemindPage() {
     setLoading(true);
     setError(null);
     setRevealMeaning(false);
-    setCard(null);
+    // setCard(null)을 여기서 바로 호출하지 않음 (깜빡임 방지)
 
     const qs = new URLSearchParams({ user_id: String(userId), difficulty_level: selectedLevel });
 
@@ -66,24 +66,39 @@ export default function RemindPage() {
         }
         return r.json();
       })
-      .then(setCard)
+      .then((newCard) => {
+        setCard(newCard);
+      })
       .catch((e) => {
+        console.error("Load remind card error:", e);
+        // 에러 발생 시에만 카드를 null로 설정
         setCard(null);
         setError(e.message);
+        // 404 에러(리마인드할 단어 없음)는 재시도하지 않음
+        if (!e.message.includes("리마인드할 단어가 없습니다")) {
+          // 다른 에러만 1초 후 다시 시도
+          setTimeout(() => {
+            loadNext();
+          }, 1000);
+        }
       })
       .finally(() => setLoading(false));
   }, [userId, selectedLevel]);
 
   useEffect(() => {
     if (user) {
+      // 초기 로드 시에만 카드를 null로 설정하지 않고 로딩 상태만 설정
+      setLoading(true);
       loadNext();
     }
-  }, [user, loadNext]);
+  }, [user]); // loadNext 의존성 제거
 
   const handleChangeLevel = (levelValue) => {
     setSelectedLevel(levelValue);
     localStorage.setItem("selectedDifficultyLevel", levelValue);
     setSearchParams({ difficulty_level: levelValue });
+    // 레벨 변경 시에만 카드 초기화
+    setCard(null);
   };
 
   const submit = (grade) => {
@@ -104,18 +119,18 @@ export default function RemindPage() {
         }
         return r.json();
       })
-      .then(() => loadNext())
+      .then(() => {
+        // 성공 시 다음 카드 로드
+        loadNext();
+      })
       .catch((e) => {
         console.error("Remind review error:", e);
+        // 에러 발생 시 에러 메시지만 설정
         setError(e.message);
-        // API 실패해도 다음 카드로 넘어가기 (무한 루프 방지)
-        setTimeout(() => {
-          loadNext();
-        }, 2000);
+        setCard(null);
+        // 제출 에러는 자동 재시도하지 않음 (사용자가 직접 새로고침하도록)
       })
-      .finally(() => {
-        setLoading(false);
-      });
+      .finally(() => setLoading(false));
   };
 
   const handleBackToDashboard = () => {
@@ -189,13 +204,24 @@ export default function RemindPage() {
           {/* Error Display */}
           {error ? (
             <div className="bg-red-50 border border-red-100 rounded-xl p-4 mb-6">
-              <div className="text-red-700 text-sm">{error}</div>
+              <div className="text-red-700 text-sm mb-3">{error}</div>
+              {!error.includes("리마인드할 단어가 없습니다") && (
+                <button
+                  onClick={() => {
+                    setError(null);
+                    loadNext();
+                  }}
+                  className="bg-red-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-red-700 transition-colors"
+                >
+                  다시 시도
+                </button>
+              )}
             </div>
           ) : null}
 
           {/* Main Card */}
-          <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-[0_1px_4px_rgba(0,0,0,0.06)]">
-            {loading ? (
+          <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-[0_1px_4px_rgba(0,0,0,0.06)] relative">
+            {loading && !card ? (
               <div className="text-center py-10">
                 <div className="text-gray-500">로딩 중...</div>
               </div>
@@ -216,6 +242,12 @@ export default function RemindPage() {
               </div>
             ) : (
               <div>
+                {/* Loading overlay */}
+                {loading && (
+                  <div className="absolute inset-0 bg-white bg-opacity-75 flex items-center justify-center z-10 rounded-xl">
+                    <div className="text-gray-500">처리 중...</div>
+                  </div>
+                )}
                 {/* Day Topic */}
                 {card.vocab.topic ? (
                   <div className="bg-orange-50 border border-orange-100 rounded-xl p-4 mb-6">
