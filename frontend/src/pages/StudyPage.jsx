@@ -115,6 +115,12 @@ export default function StudyPage() {
   }, [userId, selectedLevel]);
 
   const ensureOpenDay = useCallback(async () => {
+    // Check if we should prevent dialogs (user navigated to dashboard)
+    if (localStorage.getItem('prevent_study_dialogs') === 'true') {
+      localStorage.removeItem('prevent_study_dialogs');
+      throw new Error("User navigated away, preventing further dialogs");
+    }
+    
     const level = await fetchLevelStatus();
     setDayInfo(level);
 
@@ -134,7 +140,8 @@ export default function StudyPage() {
 
     if (!level.next_day && !level.open_day) {
       if (level.cycle_status === "completed_pending_confirm") {
-        const ok = window.confirm("🎉 30일 학습을 모두 완료했습니다! 다음 회독을 시작하시겠습니까?");
+        const totalDays = level.total_days || 30;
+        const ok = window.confirm(`🎉 ${totalDays}일 학습을 모두 완료했습니다! 다음 회독을 시작하시겠습니까?`);
         if (!ok) {
           throw new Error("회독 완료를 나중에 확인할 수 있습니다. 대시보드로 돌아가세요.");
         }
@@ -142,12 +149,12 @@ export default function StudyPage() {
         const completeR = await fetch(`${API_BASE}/levels/day/complete`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ user_id: userId, difficulty_level: selectedLevel, day: 30 }),
+          body: JSON.stringify({ user_id: userId, difficulty_level: selectedLevel, day: totalDays }),
         });
         
         if (!completeR.ok) {
           const data = await completeR.json().catch(() => ({}));
-          throw new Error(data.detail || "failed to complete day 30");
+          throw new Error(data.detail || `failed to complete day ${totalDays}`);
         }
         
         const completeData = await completeR.json();
@@ -155,7 +162,9 @@ export default function StudyPage() {
           alert(completeData.message);
         }
         
-        window.location.reload();
+        // Navigate to dashboard instead of reload
+        localStorage.setItem('prevent_study_dialogs', 'true');
+        navigate("/dashboard");
         return;
       } else {
         throw new Error("학습을 진행할 수 없는 상태입니다. 대시보드를 확인해주세요.");
@@ -191,7 +200,7 @@ export default function StudyPage() {
       console.warn("Failed to load current day progress after open:", e);
     }
     return { ...refreshed, open_day: opened.day };
-  }, [fetchLevelStatus, selectedLevel, userId]);
+  }, [fetchLevelStatus, selectedLevel, userId, navigate]);
 
   const loadNext = useCallback(() => {
     setLoading(true);
@@ -200,50 +209,16 @@ export default function StudyPage() {
     setCard(null);
 
     (async () => {
-      const level = await ensureOpenDay();
-      if (!level.open_day) {
-        if (!level.next_day && level.cycle_status === "completed_pending_confirm") {
-          const ok = window.confirm("🎉 30일 학습을 모두 완료했습니다! 다음 회독을 시작하시겠습니까?");
-          if (!ok) {
-            throw new Error("회독 완료를 나중에 확인할 수 있습니다. 대시보드로 돌아가세요.");
-          }
-          
-          const completeR = await fetch(`${API_BASE}/levels/day/complete`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ user_id: userId, difficulty_level: selectedLevel, day: 30 }),
-          });
-          
-          if (!completeR.ok) {
-            const data = await completeR.json().catch(() => ({}));
-            throw new Error(data.detail || "failed to complete day 30");
-          }
-          
-          const completeData = await completeR.json();
-          if (completeData.message) {
-            alert(completeData.message);
-          }
-          
-          window.location.reload();
-          return;
-        }
-        
-        setCard(null);
-        return;
-      }
+      let isMounted = true;
       
-      const qs = new URLSearchParams({ 
-        user_id: String(userId), 
-        difficulty_level: selectedLevel,
-        exclude_perfect: excludePerfect ? "true" : "false"
-      });
-
-      const r = await fetch(`${API_BASE}/cards/today?${qs.toString()}`);
-      if (!r.ok) {
-        const data = await r.json().catch(() => ({}));
-        if (r.status === 404) {
-          if (level.cycle_status === "completed_pending_confirm") {
-            const ok = window.confirm("🎉 30일 학습을 모두 완료했습니다! 다음 회독을 시작하시겠습니까?");
+      try {
+        const level = await ensureOpenDay();  
+        if (!isMounted || !level) return;  
+        
+        if (!level.open_day) {
+          if (!level.next_day && level.cycle_status === "completed_pending_confirm") {
+            const totalDays = level.total_days || 30;
+            const ok = window.confirm(`🎉 ${totalDays}일 학습을 모두 완료했습니다! 다음 회독을 시작하시겠습니까?`);
             if (!ok) {
               throw new Error("회독 완료를 나중에 확인할 수 있습니다. 대시보드로 돌아가세요.");
             }
@@ -251,12 +226,12 @@ export default function StudyPage() {
             const completeR = await fetch(`${API_BASE}/levels/day/complete`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ user_id: userId, difficulty_level: selectedLevel, day: 30 }),
+              body: JSON.stringify({ user_id: userId, difficulty_level: selectedLevel, day: totalDays }),
             });
             
             if (!completeR.ok) {
               const data = await completeR.json().catch(() => ({}));
-              throw new Error(data.detail || "failed to complete day 30");
+              throw new Error(data.detail || `failed to complete day ${totalDays}`);
             }
             
             const completeData = await completeR.json();
@@ -264,36 +239,137 @@ export default function StudyPage() {
               alert(completeData.message);
             }
             
-            window.location.reload();
+            // Navigate to dashboard instead of reload
+            localStorage.setItem('prevent_study_dialogs', 'true');
+            navigate("/dashboard");
             return;
           }
           
-          throw new Error(
-            data.detail ||
-              `Day ${level.open_day ?? "-"}에 해당하는 단어가 없습니다. (difficulty_level/day 데이터를 확인하세요)`
-          );
+          if (isMounted) setCard(null);
+          return;
         }
-        throw new Error(data.detail || "failed to load card");
-      }
-      const data = await r.json();
-      setCard(data);
-    })()
-      .catch((e) => {
+        
+        const qs = new URLSearchParams({ 
+          user_id: String(userId), 
+          difficulty_level: selectedLevel,
+          exclude_perfect: excludePerfect ? "true" : "false"
+        });
+
+        const r = await fetch(`${API_BASE}/cards/today?${qs.toString()}`);
+        if (!isMounted) return;
+        
+        if (!r.ok) {
+          const data = await r.json().catch(() => ({}));
+          if (r.status === 404) {
+            if (level.cycle_status === "completed_pending_confirm") {
+              const totalDays = level.total_days || 30;
+              const ok = window.confirm(`🎉 ${totalDays}일 학습을 모두 완료했습니다! 다음 회독을 시작하시겠습니까?`);
+              if (!ok) {
+                throw new Error("회독 완료를 나중에 확인할 수 있습니다. 대시보드로 돌아가세요.");
+              }
+              
+              const completeR = await fetch(`${API_BASE}/levels/day/complete`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ user_id: userId, difficulty_level: selectedLevel, day: totalDays }),
+              });
+              
+              if (!completeR.ok) {
+                const data = await completeR.json().catch(() => ({}));
+                throw new Error(data.detail || `failed to complete day ${totalDays}`);
+              }
+              
+              const completeData = await completeR.json();
+              if (completeData.message) {
+                alert(completeData.message);
+              }
+              
+              // Navigate to dashboard instead of reload
+              localStorage.setItem('prevent_study_dialogs', 'true');
+              navigate("/dashboard");
+              return;
+            }
+            
+            throw new Error(
+              data.detail ||
+                `Day ${level.open_day ?? "-"}에 해당하는 단어가 없습니다. (difficulty_level/day 데이터를 확인하세요)`
+            );
+          }
+          throw new Error(data.detail || "failed to load card");
+        }
+        const data = await r.json();
+        if (isMounted) setCard(data);
+        
+        // 카드 로드 후 Day 정보도 업데이트
+        if (data.vocab?.day && isMounted) {
+          try {
+            const dayResponse = await fetch(`${API_BASE}/stats/current-day?user_id=${userId}&difficulty_level=${selectedLevel}`);
+            if (dayResponse.ok) {
+              const dayData = await dayResponse.json();
+              if (isMounted) setDayProgress(dayData);
+            }
+          } catch (e) {
+            console.error("Failed to load day progress:", e);
+          }
+        }
+      } catch (e) {
+        if (!isMounted) return;
         console.error("Load next card error:", e);
+        
+        // Don't retry if user explicitly cancelled or navigated away
+        if (e.message.includes("회독 완료를 나중에 확인할 수 있습니다") || 
+            e.message.includes("오늘 학습을 시작하지 않았습니다") ||
+            e.message.includes("User navigated away, preventing further dialogs")) {
+          // User cancelled or navigated away, don't retry
+          setError(e.message);
+          setLoading(false);
+          return;
+        }
+        
         setCard(null);
         setError(null);
         setTimeout(() => {
-          loadNext();
+          if (isMounted) loadNext();
         }, 1000);
-      })
-      .finally(() => setLoading(false));
-  }, [userId, selectedLevel, excludePerfect]);
+      } finally {
+        if (isMounted) setLoading(false);
+      }
+    })();
+  }, [userId, selectedLevel, excludePerfect, ensureOpenDay, navigate]);
 
   useEffect(() => {
     if (user) {
       loadNext();
     }
   }, [user]); // loadNext 제거
+
+  // Cleanup on unmount to prevent background requests
+  useEffect(() => {
+    let isMounted = true;
+    const abortController = new AbortController();
+    
+    return () => {
+      isMounted = false;
+      abortController.abort();  // Cancel all ongoing requests
+      setLoading(false);
+      setError(null);
+    };
+  }, []);
+
+  // Global mounted state for confirm dialogs
+  const [isComponentMounted, setIsComponentMounted] = useState(true);
+  const [abortController, setAbortController] = useState(null);
+
+  useEffect(() => {
+    setIsComponentMounted(true);
+    const controller = new AbortController();
+    setAbortController(controller);
+    
+    return () => {
+      setIsComponentMounted(false);
+      controller.abort();  // Cancel all ongoing requests
+    };
+  }, []);
 
   const handleChangeLevel = (levelValue) => {
     setSelectedLevel(levelValue);
@@ -320,7 +396,25 @@ export default function StudyPage() {
         return r.json();
       })
       .then(() => {
-        loadNext();
+        // 현재 진행률 확인
+        const totalWords = dayProgress?.total_words || 0;
+        const studiedWords = (dayProgress?.progressed_words || 0) + 1; // 현재 단어 포함
+        
+        if (studiedWords >= totalWords) {
+          // Day 완료 확인 모달 표시
+          if (window.confirm(`Day ${dayProgress?.day} 학습이 완료되었습니다! 다음 Day 학습을 시작하시겠습니까?`)) {
+            // 다음 Day로 이동 - 상태 초기화 후 로드
+            setDayProgress(null);
+            setCard(null);
+            setError(null);
+            loadNext();
+          } else {
+            // 대시보드로 이동
+            handleBackToDashboard();
+          }
+        } else {
+          loadNext();
+        }
       })
       .catch((e) => {
         console.error("Study review error:", e);
@@ -330,6 +424,8 @@ export default function StudyPage() {
   };
 
   const handleBackToDashboard = () => {
+    // Set flag to prevent any further confirm dialogs
+    localStorage.setItem('prevent_study_dialogs', 'true');
     navigate("/dashboard");
   };
 
@@ -347,118 +443,30 @@ export default function StudyPage() {
 
   return (
     <div className="min-h-screen bg-[#F8F9FA] pb-24">
-      {/* 1. 상단 헤더: 사용자 정보와 알림 */}
-      <div className="sticky top-0 z-50 bg-white/80 backdrop-blur-md px-6 py-4 flex items-center justify-between">
+      {/* 1. 상단 헤더: 사용자 정보와 현재 상태 */}
+      <div className="sticky top-0 z-50 bg-gradient-to-r from-blue-50 to-indigo-50 backdrop-blur-md px-6 py-4 flex items-center justify-between border-b border-blue-100/50">
         <div className="flex items-center gap-3">
           <button
             onClick={handleBackToDashboard}
-            className="p-2 bg-white rounded-xl shadow-sm border border-gray-100"
+            className="p-2 bg-white/80 rounded-xl shadow-sm border border-blue-100/80 backdrop-blur-sm"
           >
-            <ArrowLeft size={20} className="text-gray-700" />
+            <ArrowLeft size={20} className="text-blue-700" />
           </button>
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center">
+            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shadow-sm">
               <User size={18} className="text-white" />
             </div>
-            <div>
-              <div className="text-xs text-gray-500">오늘도 화이팅!</div>
+            <div className="flex items-center gap-2">
               <div className="text-lg font-bold text-gray-900">{user.username || '학습자'} 님</div>
+              <div className="text-sm font-medium text-blue-600">
+                학습하기 {dayInfo?.open_day ? `• Day ${dayInfo.open_day} 진행중` : '• 시작하기'}
+              </div>
             </div>
           </div>
         </div>
-        <button className="p-2 bg-white rounded-xl shadow-sm border border-gray-100">
-          <Bell size={20} className="text-gray-700" />
-        </button>
       </div>
 
       <div className="px-6 mt-6">
-        {/* 2. 메인 액션 섹션: 학습하기 & 리마인드 (가장 크게 강조) */}
-        <div className="flex gap-4 mb-8">
-          <button 
-            onClick={() => {/* 현재 페이지 */}}
-            className="flex-1 bg-gradient-to-br from-indigo-500 to-purple-600 p-6 rounded-3xl shadow-lg shadow-indigo-500/25 text-white"
-          >
-            <BookOpen size={32} />
-            <div className="mt-4">
-              <div className="text-xl font-bold">학습하기</div>
-              <div className="text-sm text-indigo-100 mt-1">
-                {dayInfo?.open_day ? `Day ${dayInfo.open_day} 진행중` : '시작하기'}
-              </div>
-            </div>
-          </button>
-
-          <button 
-            onClick={handleRemindPage}
-            className="flex-1 bg-white p-6 rounded-3xl shadow-md border border-gray-100"
-          >
-            <RefreshCw size={32} className="text-orange-500" />
-            <div className="mt-4">
-              <div className="text-xl font-bold text-gray-900">리마인드</div>
-              <div className="text-sm text-gray-500 mt-1">복습하기</div>
-            </div>
-          </button>
-        </div>
-
-        {/* 4. Day Progress */}
-        {dayProgress && dayProgress.day ? (
-          <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100 mb-6">
-            <div className="flex justify-between items-center mb-4">
-              <div className="text-lg font-bold text-gray-900">
-                Day {dayProgress.day} 진행률
-                {excludePerfect && (
-                  <span className="text-xs text-gray-500 ml-2">(Perfect 단어 제외)</span>
-                )}
-              </div>
-              <div className="text-sm font-semibold text-indigo-600">
-                {excludePerfect 
-                  ? (() => {
-                      const totalWords = dayProgress.total_words || 0;
-                      const perfectWords = dayProgress.perfect_words || 0;
-                      const studiedWords = dayProgress.studied_words || dayProgress.progressed_words || 0; // Use progressed_words as fallback
-                      const adjustedTotal = Math.max(1, totalWords - perfectWords);
-                      const progress = Math.round((studiedWords / adjustedTotal) * 100);
-                      return `${progress}%`;
-                    })()
-                  : `${dayProgress.progress_pct || 0}%`
-                }
-              </div>
-            </div>
-            <div className="h-3 bg-gray-100 rounded-full overflow-hidden">
-              <div 
-                className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 rounded-full transition-all duration-500" 
-                style={{
-                  width: excludePerfect 
-                    ? (() => {
-                        const totalWords = dayProgress.total_words || 0;
-                        const perfectWords = dayProgress.perfect_words || 0;
-                        const studiedWords = dayProgress.studied_words || dayProgress.progressed_words || 0; // Use progressed_words as fallback
-                        const adjustedTotal = Math.max(1, totalWords - perfectWords);
-                        const progress = Math.round((studiedWords / adjustedTotal) * 100);
-                        return `${progress}%`;
-                      })()
-                    : `${dayProgress.progress_pct || 0}%`
-                }}
-              />
-            </div>
-            <div className="flex justify-between items-center mt-3">
-              <div className="text-sm text-gray-500">
-                {dayProgress.progressed_words}개 완료
-                {excludePerfect && (
-                  <span className="text-xs text-gray-400 ml-1">
-                    (Perfect {dayProgress.perfect_words || 0}개 제외)
-                  </span>
-                )}
-              </div>
-              <div className="text-sm text-gray-500">
-                총 {excludePerfect 
-                  ? `${dayProgress.total_words - (dayProgress.perfect_words || 0)}개`
-                  : `${dayProgress.total_words}개`
-                }
-              </div>
-            </div>
-          </div>
-        ) : null}
-
         {/* 5. Day Topic */}
         {card?.vocab?.topic ? (
           <div className="bg-gradient-to-r from-orange-50 to-amber-50 rounded-3xl p-6 mb-6 border border-orange-100">
@@ -606,6 +614,76 @@ export default function StudyPage() {
         </div>
 
               </div>
+
+      {/* 7. Day Progress - 하단 고정 */}
+      {dayProgress && dayProgress.day ? (
+        <div className="fixed bottom-20 left-0 right-0 bg-white/95 backdrop-blur-xl border-t border-blue-100/50 px-6 py-2">
+          <div className="flex justify-between items-center mb-3">
+            <div className="text-sm font-bold text-gray-900">
+              Day {dayProgress.day} 진행률
+              {excludePerfect && (
+                <span className="text-xs text-gray-500 ml-2">(Perfect 단어 제외)</span>
+              )}
+            </div>
+            <div className="text-sm font-semibold text-indigo-600">
+              {excludePerfect 
+                ? (() => {
+                    const totalWords = dayProgress.total_words || 0;
+                    const perfectWords = dayProgress.perfect_words || 0;
+                    const studiedWords = (dayProgress.studied_words || dayProgress.progressed_words || 0) + (card ? 1 : 0);
+                    const adjustedTotal = Math.max(1, totalWords - perfectWords);
+                    const progress = Math.round((studiedWords / adjustedTotal) * 100);
+                    return `${studiedWords}/${adjustedTotal} (${progress}%)`;
+                  })()
+                : (() => {
+                    const totalWords = dayProgress.total_words || 0;
+                    const studiedWords = (dayProgress.progressed_words || 0) + (card ? 1 : 0);
+                    const progress = Math.round((studiedWords / totalWords) * 100);
+                    return `${studiedWords}/${totalWords} (${progress}%)`;
+                  })()
+              }
+            </div>
+          </div>
+          <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+            <div 
+              className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 rounded-full transition-all duration-500" 
+              style={{
+                width: excludePerfect 
+                  ? (() => {
+                      const totalWords = dayProgress.total_words || 0;
+                      const perfectWords = dayProgress.perfect_words || 0;
+                      const studiedWords = (dayProgress.studied_words || dayProgress.progressed_words || 0) + (card ? 1 : 0);
+                      const adjustedTotal = Math.max(1, totalWords - perfectWords);
+                      const progress = Math.round((studiedWords / adjustedTotal) * 100);
+                      return `${progress}%`;
+                    })()
+                  : (() => {
+                      const totalWords = dayProgress.total_words || 0;
+                      const studiedWords = (dayProgress.progressed_words || 0) + (card ? 1 : 0);
+                      const progress = Math.round((studiedWords / totalWords) * 100);
+                      return `${progress}%`;
+                    })()
+              }}
+            />
+          </div>
+          <div className="flex justify-between items-center mt-2">
+            <div className="text-xs text-gray-500">
+              {dayProgress.progressed_words}개 완료
+              {excludePerfect && (
+                <span className="text-xs text-gray-400 ml-1">
+                  (Perfect {dayProgress.perfect_words || 0}개 제외)
+                </span>
+              )}
+            </div>
+            <div className="text-xs text-gray-500">
+              총 {excludePerfect 
+                ? `${dayProgress.total_words - (dayProgress.perfect_words || 0)}개`
+                : `${dayProgress.total_words}개`
+              }
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {/* 8. iOS 스타일 하단 네비게이션 바 */}
       <div className="fixed bottom-0 left-0 right-0 bg-white/90 backdrop-blur-xl border-t border-gray-100 px-6 py-4">

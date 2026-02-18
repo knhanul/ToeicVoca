@@ -63,6 +63,36 @@ class RemindReviewOut(BaseModel):
     studied_at: datetime
 
 
+class RemindSessionStart(BaseModel):
+    user_id: int
+    difficulty_level: str
+
+
+class RemindSessionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    session_id: str
+    total_words: int
+    current_index: int
+    completed_count: int
+    words: list[dict]  # vocab_id, word, meaning, day
+
+
+class RemindCardOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    session_id: str
+    current_index: int
+    total_words: int
+    completed_count: int
+    vocab: VocabOut
+    is_last: bool
+
+
+class GradeSubmission(BaseModel):
+    grade: ReviewGrade
+
+
 LevelValue = Literal["600", "800", "900"]
 
 
@@ -73,7 +103,7 @@ class LevelStatusOut(BaseModel):
     next_day: int | None
     open_day: int | None
     completed_days: int
-    total_days: int = 30
+    total_days: int
     cycle_progress_pct: int
     remind_window_days: int = 7
 
@@ -163,12 +193,16 @@ class LevelStatsOut(BaseModel):
     difficulty_level: LevelValue
     cycle_no: int
     completed_days: int
-    total_days: int = 30
+    total_days: int
     day_progress_pct: int
     total_vocab: int
     perfect_vocab: int
     previous_cycle_perfect_vocab: int
     memorization_pct: int
+    # 회차별 진도율 계산을 위한 필드들
+    current_cycle_progressed_words: int = 0  # 현재 회차에서 학습된 단어 수
+    current_cycle_total_words: int = 0  # 현재 회차에서 학습해야 할 단어 수 (전 회차 Perfect 제외)
+    current_cycle_progress_pct: int = 0  # 현재 회차 진도율
     day_word_counts: list[DayWordCountsOut]
     recent_study: list[RecentStudyOut]
 

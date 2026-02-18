@@ -12,6 +12,7 @@ export default function RemindPage() {
   const [revealMeaning, setRevealMeaning] = useState(false);
   const [revealExample, setRevealExample] = useState(false);
   const [user, setUser] = useState(null);
+  const [session, setSession] = useState(null);
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -55,34 +56,95 @@ export default function RemindPage() {
     setRevealMeaning(false);
     setRevealExample(false);
 
-    const qs = new URLSearchParams({ user_id: String(userId), difficulty_level: selectedLevel });
-
-    fetch(`${API_BASE}/cards/remind?${qs.toString()}`)
-      .then(async (r) => {
-        if (!r.ok) {
-          const data = await r.json().catch(() => ({}));
-          if (r.status === 404) {
-            throw new Error(data.detail || "리마인드할 단어가 없습니다. (최근 7일간 학습한 단어만 대상입니다)");
+    if (session) {
+      // 세션에서 다음 카드 가져오기
+      fetch(`${API_BASE}/remind/session/${session.session_id}/next`)
+        .then(async (r) => {
+          if (!r.ok) {
+            const data = await r.json().catch(() => ({}));
+            if (r.status === 404) {
+              throw new Error(data.detail || "세션이 완료되었습니다.");
+            }
+            throw new Error(data.detail || "failed to load next card");
           }
-          throw new Error(data.detail || "failed to load remind card");
-        }
-        return r.json();
+          return r.json();
+        })
+        .then((newCard) => {
+          setCard(newCard);
+          setSession(prev => ({
+            ...prev,
+            current_index: newCard.current_index,
+            completed_count: newCard.completed_count
+          }));
+        })
+        .catch((e) => {
+          console.error("Load next card error:", e);
+          setCard(null);
+          setError(e.message);
+        })
+        .finally(() => {
+          setLoading(false);
+        });
+    } else {
+      // 새 세션 시작
+      fetch(`${API_BASE}/remind/session/start`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          user_id: userId, 
+          difficulty_level: selectedLevel 
+        }),
       })
-      .then((newCard) => {
-        setCard(newCard);
-      })
-      .catch((e) => {
-        console.error("Load remind card error:", e);
-        setCard(null);
-        setError(e.message);
-        if (!e.message.includes("리마인드할 단어가 없습니다")) {
-          setTimeout(() => {
-            loadNext();
-          }, 1000);
-        }
-      })
-      .finally(() => setLoading(false));
-  }, [userId, selectedLevel]);
+        .then(async (r) => {
+          if (!r.ok) {
+            const data = await r.json().catch(() => ({}));
+            if (r.status === 404) {
+              throw new Error(data.detail || "리마인드할 단어가 없습니다. (최근 7일간 학습한 단어만 대상입니다)");
+            }
+            throw new Error(data.detail || "failed to start session");
+          }
+          return r.json();
+        })
+        .then((sessionData) => {
+          setSession(sessionData);
+          if (sessionData.total_words > 0) {
+            // 첫 번째 카드 가져오기
+            return fetch(`${API_BASE}/remind/session/${sessionData.session_id}/next`);
+          } else {
+            throw new Error("리마인드할 단어가 없습니다.");
+          }
+        })
+        .then(async (r) => {
+          if (!r.ok) {
+            const data = await r.json().catch(() => ({}));
+            throw new Error(data.detail || "failed to load first card");
+          }
+          return r.json();
+        })
+        .then((firstCard) => {
+          setCard(firstCard);
+          setSession(prev => ({
+            ...prev,
+            current_index: firstCard.current_index,
+            completed_count: firstCard.completed_count
+          }));
+        })
+        .catch((e) => {
+          console.error("Start session error:", e);
+          setCard(null);
+          if (e.message.includes("모든 단어를 완벽하게 마쳤습니다")) {
+            setError("모든 단어를 완벽하게 마쳤습니다! 🎉\n나중에 다시 리마인드해주세요.");
+          } else if (e.message.includes("리마인드할 단어가 없습니다")) {
+            setError(e.message);
+          } else {
+            setError(e.message);
+          }
+        })
+        .finally(() => {
+          setLoading(false);
+        });
+    }
+  }, [userId, selectedLevel, session]);
 
   useEffect(() => {
     if (user) {
@@ -96,18 +158,19 @@ export default function RemindPage() {
     localStorage.setItem("selectedDifficultyLevel", levelValue);
     setSearchParams({ difficulty_level: levelValue });
     setCard(null);
+    setSession(null); // 세션 초기화
   };
 
   const submit = (grade) => {
-    if (!card?.vocab?.id) return;
+    if (!card?.vocab?.id || !session) return;
 
     setLoading(true);
     setError(null);
 
-    fetch(`${API_BASE}/review/remind`, {
+    fetch(`${API_BASE}/remind/session/${session.session_id}/submit`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ user_id: userId, vocab_id: card.vocab.id, grade }),
+      body: JSON.stringify({ grade }),
     })
       .then(async (r) => {
         if (!r.ok) {
@@ -116,8 +179,82 @@ export default function RemindPage() {
         }
         return r.json();
       })
-      .then(() => {
-        loadNext();
+      .then((result) => {
+        if (result.next_index >= session.total_words) {
+          // 세션 완료
+          if (window.confirm("리마인드 세션이 완료되었습니다! 다시 리마인드 학습을 시작하시겠습니까?")) {
+            // 세션 초기화하고 다시 시작
+            setSession(null);
+            setCard(null);
+            setError(null);
+            setLoading(true);
+            
+            // 새 세션 시작 시도
+            fetch(`${API_BASE}/remind/session/start`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ 
+                user_id: userId, 
+                difficulty_level: selectedLevel 
+              }),
+            })
+              .then(async (r) => {
+                if (!r.ok) {
+                  const data = await r.json().catch(() => ({}));
+                  if (r.status === 404) {
+                    // 단어가 없는 경우
+                    setCard(null);
+                    if (data.detail.includes("모든 단어를 완벽하게 마쳤습니다")) {
+                      setError("모든 단어를 완벽하게 마쳤습니다! 🎉\n나중에 다시 리마인드해주세요.");
+                    } else {
+                      setError(data.detail || "리마인드할 단어가 없습니다.");
+                    }
+                  } else {
+                    throw new Error(data.detail || "failed to start session");
+                  }
+                } else {
+                  return r.json();
+                }
+              })
+              .then((sessionData) => {
+                if (sessionData) {
+                  setSession(sessionData);
+                  // 첫 번째 카드 가져오기
+                  return fetch(`${API_BASE}/remind/session/${sessionData.session_id}/next`);
+                }
+              })
+              .then(async (r) => {
+                if (r && !r.ok) {
+                  const data = await r.json().catch(() => ({}));
+                  throw new Error(data.detail || "failed to load first card");
+                }
+                return r ? r.json() : null;
+              })
+              .then((firstCard) => {
+                if (firstCard) {
+                  setCard(firstCard);
+                  setSession(prev => ({
+                    ...prev,
+                    current_index: firstCard.current_index,
+                    completed_count: firstCard.completed_count
+                  }));
+                }
+              })
+              .catch((e) => {
+                console.error("Restart session error:", e);
+                setCard(null);
+                setError(e.message);
+              })
+              .finally(() => {
+                setLoading(false);
+              });
+          } else {
+            // 대시보드로 이동
+            handleBackToDashboard();
+          }
+        } else {
+          loadNext();
+        }
       })
       .catch((e) => {
         console.error("Remind review error:", e);
@@ -146,56 +283,30 @@ export default function RemindPage() {
 
   return (
     <div className="min-h-screen bg-[#F8F9FA] pb-24">
-      {/* 1. 상단 헤더: 사용자 정보와 알림 */}
-      <div className="sticky top-0 z-50 bg-white/80 backdrop-blur-md px-6 py-4 flex items-center justify-between">
+      {/* 1. 상단 헤더: 사용자 정보와 현재 상태 */}
+      <div className="sticky top-0 z-50 bg-gradient-to-r from-orange-50 to-amber-50 backdrop-blur-xl px-6 py-4 flex items-center justify-between border-b border-orange-100/50">
         <div className="flex items-center gap-3">
           <button
             onClick={handleBackToDashboard}
-            className="p-2 bg-white rounded-xl shadow-sm border border-gray-100"
+            className="p-2.5 bg-white/80 rounded-2xl shadow-sm border border-orange-100/80 backdrop-blur-sm transition-all duration-200 hover:shadow-md hover:bg-white hover:scale-105"
           >
-            <ArrowLeft size={20} className="text-gray-700" />
+            <ArrowLeft size={20} className="text-orange-700" />
           </button>
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-orange-500 to-red-600 flex items-center justify-center">
+            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-orange-500/90 to-red-600/90 flex items-center justify-center shadow-sm backdrop-blur-sm">
               <RefreshCw size={18} className="text-white" />
             </div>
-            <div>
-              <div className="text-xs text-gray-500">복습 시간!</div>
+            <div className="flex items-center gap-2">
               <div className="text-lg font-bold text-gray-900">{user.username || '학습자'} 님</div>
+              <div className="text-sm font-medium text-orange-600">
+                리마인드 • 복습하기
+              </div>
             </div>
           </div>
         </div>
-        <button className="p-2 bg-white rounded-xl shadow-sm border border-gray-100">
-          <Bell size={20} className="text-gray-700" />
-        </button>
       </div>
 
       <div className="px-6 mt-6">
-        {/* 2. 메인 액션 섹션: 학습하기 & 리마인드 (가장 크게 강조) */}
-        <div className="flex gap-4 mb-8">
-          <button 
-            onClick={handleStudyPage}
-            className="flex-1 bg-white p-6 rounded-3xl shadow-md border border-gray-100"
-          >
-            <BookOpen size={32} className="text-indigo-500" />
-            <div className="mt-4">
-              <div className="text-xl font-bold text-gray-900">학습하기</div>
-              <div className="text-sm text-gray-500 mt-1">새로운 단어</div>
-            </div>
-          </button>
-
-          <button 
-            onClick={() => {/* 현재 페이지 */}}
-            className="flex-1 bg-gradient-to-br from-orange-500 to-red-600 p-6 rounded-3xl shadow-lg shadow-orange-500/25 text-white"
-          >
-            <RefreshCw size={32} />
-            <div className="mt-4">
-              <div className="text-xl font-bold">리마인드</div>
-              <div className="text-sm text-orange-100 mt-1">복습하기</div>
-            </div>
-          </button>
-        </div>
-
         {/* 4. Day Topic */}
         {card?.vocab?.topic ? (
           <div className="bg-gradient-to-r from-orange-50 to-amber-50 rounded-3xl p-6 mb-6 border border-orange-100">
@@ -216,7 +327,7 @@ export default function RemindPage() {
           ) : error ? (
             <div className="p-8 text-center">
               <div className="text-red-600 mb-4">{error}</div>
-              {!error.includes("리마인드할 단어가 없습니다") && (
+              {!error.includes("리마인드할 단어가 없습니다") && !error.includes("모든 단어를 완벽하게 마쳤습니다") && !error.includes("나중에 다시 리마인드해주세요") && (
                 <button
                   onClick={() => {
                     setError(null);
@@ -227,7 +338,7 @@ export default function RemindPage() {
                   다시 시도
                 </button>
               )}
-              {error.includes("리마인드할 단어가 없습니다") && (
+              {(error.includes("리마인드할 단어가 없습니다") || error.includes("모든 단어를 완벽하게 마쳤습니다") || error.includes("나중에 다시 리마인드해주세요")) && (
                 <button
                   onClick={handleBackToDashboard}
                   className="bg-gradient-to-r from-orange-500 to-red-600 text-white px-8 py-4 rounded-2xl font-semibold shadow-lg shadow-orange-500/25"
@@ -371,7 +482,35 @@ export default function RemindPage() {
 
               </div>
 
-      {/* 7. iOS 스타일 하단 네비게이션 바 */}
+      {/* 7. Remind Progress - 하단 고정 */}
+      {session && (
+        <div className="fixed bottom-20 left-0 right-0 bg-white/95 backdrop-blur-xl border-t border-orange-100/50 px-6 py-2">
+          <div className="flex justify-between items-center mb-3">
+            <div className="text-sm font-bold text-gray-900">
+              리마인드 진행률
+            </div>
+            <div className="text-sm font-semibold text-orange-600">
+              {session.completed_count + 1}/{session.total_words} ({Math.round(((session.completed_count + 1) / session.total_words) * 100)}%)
+            </div>
+          </div>
+          <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+            <div 
+              className="h-full bg-gradient-to-r from-orange-500 to-red-500 rounded-full transition-all duration-500" 
+              style={{ width: `${Math.round(((session.completed_count + 1) / session.total_words) * 100)}%` }}
+            />
+          </div>
+          <div className="flex justify-between items-center mt-2">
+            <div className="text-xs text-gray-500">
+              {session.completed_count}개 완료
+            </div>
+            <div className="text-xs text-gray-500">
+              총 {session.total_words}개 단어
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 8. 하단 네비게이션 */}
       <div className="fixed bottom-0 left-0 right-0 bg-white/90 backdrop-blur-xl border-t border-gray-100 px-6 py-4">
         <div className="flex justify-around">
           <button 

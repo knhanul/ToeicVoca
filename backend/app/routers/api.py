@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
+import logging
+import uuid
+import json
+from typing import Dict
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Body
 from sqlalchemy import (
@@ -36,6 +40,10 @@ from ..schemas import (
     OpenDayIn,
     OpenDayOut,
     RemindReviewOut,
+    RemindSessionStart,
+    RemindSessionOut,
+    RemindCardOut,
+    GradeSubmission,
     ReviewIn,
     ReviewOut,
     StartNextCycleIn,
@@ -56,10 +64,17 @@ class LoginIn(BaseModel):
     username: str
     password: str
 
+
+# 리마인드 세션 저장소 (메모리)
+remind_sessions: Dict[str, dict] = {}
+
 class UserOut(BaseModel):
     id: int
     username: str
     created_at: datetime
+
+logger = logging.getLogger("uvicorn.error")
+logger.setLevel(logging.WARNING)
 
 api_router = APIRouter()
 
@@ -147,6 +162,23 @@ def _get_or_create_active_cycle(db: Session, *, user_id: int, difficulty_level: 
 
 
 def _ensure_day_rows(db: Session, *, user_id: int, difficulty_level: str, cycle_no: int) -> None:
+    # 레벨별 Max Day 계산
+    max_day = db.execute(
+        select(func.max(Vocab.day)).where(Vocab.difficulty_level == difficulty_level)
+    ).scalar_one() or 30
+    
+    # Max Day를 초과하는 기존 Day들 삭제
+    db.execute(
+        delete(LevelDayProgress).where(
+            and_(
+                LevelDayProgress.user_id == user_id,
+                LevelDayProgress.difficulty_level == difficulty_level,
+                LevelDayProgress.cycle_no == cycle_no,
+                LevelDayProgress.day > max_day
+            )
+        )
+    )
+    
     existing = db.execute(
         select(func.count(LevelDayProgress.id)).where(
             and_(
@@ -157,7 +189,7 @@ def _ensure_day_rows(db: Session, *, user_id: int, difficulty_level: str, cycle_
         )
     ).scalar_one()
 
-    if int(existing) >= 30:
+    if int(existing) >= max_day:
         return
 
     rows = [
@@ -168,7 +200,7 @@ def _ensure_day_rows(db: Session, *, user_id: int, difficulty_level: str, cycle_
             day=d,
             status="locked",
         )
-        for d in range(1, 31)
+        for d in range(1, max_day + 1)
     ]
     db.add_all(rows)
     db.flush()
@@ -236,8 +268,13 @@ def get_levels_status(user_id: int = Query(...), db: Session = Depends(get_db)):
         open_day = _get_open_day(db, user_id=user_id, difficulty_level=level, cycle_no=cycle.cycle_no)
         next_day = _get_next_day(db, user_id=user_id, difficulty_level=level, cycle_no=cycle.cycle_no)
         
-        # Day 30 완료 확인: completed_days가 30이고 open_day가 없으면 완료
-        is_cycle_completed = int(completed_days) >= 30 and open_day is None
+        # 레벨별 Max Day 계산
+        max_day = db.execute(
+            select(func.max(Vocab.day)).where(Vocab.difficulty_level == level)
+        ).scalar_one() or 30
+        
+        # Max Day 완료 확인: completed_days가 max_day이고 open_day가 없으면 완료
+        is_cycle_completed = int(completed_days) >= max_day and open_day is None
         
         # 사이클 완료 상태이면 status 업데이트
         if is_cycle_completed and cycle.status == "active":
@@ -245,7 +282,7 @@ def get_levels_status(user_id: int = Query(...), db: Session = Depends(get_db)):
             cycle.completed_at = datetime.utcnow()
             db.add(cycle)
 
-        pct = int((int(completed_days) / 30) * 100)
+        pct = int((int(completed_days) / max_day) * 100)
         levels.append(
             LevelStatusOut(
                 difficulty_level=level,
@@ -254,6 +291,7 @@ def get_levels_status(user_id: int = Query(...), db: Session = Depends(get_db)):
                 next_day=next_day.day if next_day else None,
                 open_day=open_day.day if open_day else None,
                 completed_days=int(completed_days),
+                total_days=max_day,
                 cycle_progress_pct=pct,
             )
         )
@@ -268,8 +306,13 @@ def open_day(payload: OpenDayIn, db: Session = Depends(get_db)):
     if user is None:
         raise HTTPException(status_code=404, detail="user not found")
 
-    if payload.day < 1 or payload.day > 30:
-        raise HTTPException(status_code=400, detail="day must be 1..30")
+    # 레벨별 Max Day 계산
+    max_day = db.execute(
+        select(func.max(Vocab.day)).where(Vocab.difficulty_level == payload.difficulty_level)
+    ).scalar_one() or 30
+    
+    if payload.day < 1 or payload.day > max_day:
+        raise HTTPException(status_code=400, detail=f"day must be 1..{max_day}")
 
     cycle = _get_or_create_active_cycle(db, user_id=payload.user_id, difficulty_level=payload.difficulty_level)
     _ensure_day_rows(db, user_id=payload.user_id, difficulty_level=payload.difficulty_level, cycle_no=cycle.cycle_no)
@@ -338,15 +381,20 @@ def open_day(payload: OpenDayIn, db: Session = Depends(get_db)):
 
 @api_router.post("/levels/day/complete", response_model=OpenDayOut)
 def complete_day(payload: OpenDayIn, db: Session = Depends(get_db)):
-    """Day 학습 완료 처리 (Day 30 완료 시 다음 회독 시작)"""
+    """Day 학습 완료 처리 (Max Day 완료 시 다음 회독 시작)"""
     user = db.get(User, payload.user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="user not found")
 
+    # 레벨별 Max Day 계산
+    max_day = db.execute(
+        select(func.max(Vocab.day)).where(Vocab.difficulty_level == payload.difficulty_level)
+    ).scalar_one() or 30
+
     cycle = _get_or_create_active_cycle(db, user_id=payload.user_id, difficulty_level=payload.difficulty_level)
     
-    # Day 30 완료 확인
-    if int(payload.day) == 30:
+    # Max Day 완료 확인
+    if int(payload.day) == max_day:
         # 현재 사이클의 Day 30이 완료되었는지 확인
         completed_days = db.execute(
             select(func.count(LevelDayProgress.id)).where(
@@ -359,9 +407,9 @@ def complete_day(payload: OpenDayIn, db: Session = Depends(get_db)):
             )
         ).scalar_one()
         
-        # Day 30이 완료되었고, 현재 사이클이 active 상태인 경우에만 다음 회독 시작
+        # Max Day가 완료되었고, 현재 사이클이 active 상태인 경우에만 다음 회독 시작
         # 이미 completed_pending_confirm 상태이면 다음 회독이 시작된 것이므로 건너뛰기
-        if int(completed_days) >= 30 and cycle.status == "active":
+        if int(completed_days) >= max_day and cycle.status == "active":
             # 현재 사이클 완료 처리
             cycle.status = "completed_pending_confirm"
             cycle.completed_at = datetime.utcnow()
@@ -516,7 +564,7 @@ def complete_day(payload: OpenDayIn, db: Session = Depends(get_db)):
                 message=f"새로운 {new_cycle_no}회독 Day 1이 시작되었습니다."
             )
     
-    # Day 30이 아니면 일반 완료 처리
+    # Max Day가 아니면 일반 완료 처리
     day_progress = db.execute(
         select(LevelDayProgress).where(
             and_(
@@ -637,36 +685,83 @@ def get_today_card(
     
     # Add exclude_perfect filter if enabled
     if exclude_perfect:
-        # Get perfect words from previous cycle's study logs (not current cycle)
-        previous_cycle_no = cycle.cycle_no - 1
-        if previous_cycle_no > 0:
-            perfect_words_subq = (
-                select(StudyLog.vocab_id)
-                .where(
-                    and_(
-                        StudyLog.user_id == user_id,
-                        StudyLog.cycle_no == previous_cycle_no,
-                        StudyLog.difficulty_level == difficulty_level,
-                        StudyLog.result == "perfect"
-                    )
-                )
-                .distinct()
-            )
-            vocab_stmt = vocab_stmt.where(~Vocab.id.in_(perfect_words_subq))
+        # Use raw SQL to avoid SQLAlchemy subquery issues
+        perfect_words_query = text("""
+            SELECT DISTINCT vocab_id 
+            FROM study_logs sl
+            WHERE sl.user_id = :user_id 
+              AND sl.cycle_no < :cycle_no 
+              AND sl.difficulty_level = :difficulty_level 
+              AND sl.result = 'perfect'
+              AND sl.studied_at = (
+                  SELECT MAX(studied_at)
+                  FROM study_logs
+                  WHERE user_id = :user_id 
+                    AND vocab_id = sl.vocab_id
+                    AND cycle_no < :cycle_no 
+                    AND difficulty_level = :difficulty_level
+              )
+        """)
+        
+        perfect_words_result = db.execute(perfect_words_query, {
+            "user_id": user_id,
+            "cycle_no": cycle.cycle_no,
+            "difficulty_level": difficulty_level
+        }).fetchall()
+        
+        perfect_vocab_ids = [row[0] for row in perfect_words_result]
+        
+        if perfect_vocab_ids:
+            vocab_stmt = vocab_stmt.where(~Vocab.id.in_(perfect_vocab_ids))
     
     vocab_stmt = vocab_stmt.order_by(Vocab.id.asc()).limit(1)
     vocab = db.execute(vocab_stmt).scalar_one_or_none()
     if vocab is None:
-        # 현재 Day의 모든 단어를 학습했는지 확인
-        current_day_completed = db.execute(
-            text("""
-                SELECT COUNT(*) = COUNT(up.vocab_id)
-                FROM vocab v
-                LEFT JOIN user_progress up ON v.id = up.vocab_id AND up.user_id = :user_id AND up.cycle_no = :cycle_no
-                WHERE v.difficulty_level = :difficulty_level AND v.day = :current_day
-            """),
-            {"user_id": user_id, "cycle_no": cycle.cycle_no, "difficulty_level": difficulty_level, "current_day": open_day.day}
-        ).scalar()
+        # 현재 Day의 모든 단어를 학습했는지 확인 (Perfect 단어 제외 고려)
+        if exclude_perfect:
+            # Perfect 단어 제외 상태에서의 완료 확인 (전 회차까지의 최종 perfect)
+            current_day_completed = db.execute(
+                text("""
+                    SELECT COUNT(*) = COUNT(up.vocab_id)
+                    FROM vocab v
+                    LEFT JOIN user_progress up ON v.id = up.vocab_id AND up.user_id = :user_id AND up.cycle_no = :cycle_no
+                    WHERE v.difficulty_level = :difficulty_level 
+                      AND v.day = :current_day
+                      AND v.id NOT IN (
+                          SELECT DISTINCT vocab_id 
+                          FROM study_logs sl
+                          WHERE sl.user_id = :user_id 
+                            AND sl.cycle_no < :cycle_no 
+                            AND sl.difficulty_level = :difficulty_level 
+                            AND sl.result = 'perfect'
+                            AND sl.studied_at = (
+                                SELECT MAX(studied_at)
+                                FROM study_logs
+                                WHERE user_id = :user_id 
+                                  AND vocab_id = sl.vocab_id
+                                  AND cycle_no < :cycle_no 
+                                  AND difficulty_level = :difficulty_level
+                            )
+                      )
+                """),
+                {
+                    "user_id": user_id, 
+                    "cycle_no": cycle.cycle_no, 
+                    "difficulty_level": difficulty_level, 
+                    "current_day": open_day.day
+                }
+            ).scalar()
+        else:
+            # 일반 상태에서의 완료 확인
+            current_day_completed = db.execute(
+                text("""
+                    SELECT COUNT(*) = COUNT(up.vocab_id)
+                    FROM vocab v
+                    LEFT JOIN user_progress up ON v.id = up.vocab_id AND up.user_id = :user_id AND up.cycle_no = :cycle_no
+                    WHERE v.difficulty_level = :difficulty_level AND v.day = :current_day
+                """),
+                {"user_id": user_id, "cycle_no": cycle.cycle_no, "difficulty_level": difficulty_level, "current_day": open_day.day}
+            ).scalar()
         
         if current_day_completed:
             # 현재 Day 완료 처리
@@ -679,8 +774,13 @@ def get_today_card(
                 {"user_id": user_id, "difficulty_level": difficulty_level, "cycle_no": cycle.cycle_no, "current_day": open_day.day}
             )
             
-            # Day 30 완료 확인
-            if open_day.day >= 30:
+            # 레벨별 Max Day 계산
+            max_day = db.execute(
+                select(func.max(Vocab.day)).where(Vocab.difficulty_level == difficulty_level)
+            ).scalar_one() or 30
+            
+            # Max Day 완료 확인
+            if open_day.day >= max_day:
                 # 사이클 완료 처리
                 cycle.status = "completed_pending_confirm"
                 cycle.completed_at = datetime.utcnow()
@@ -694,7 +794,7 @@ def get_today_card(
                 )
             
             # 다음 Day 열기
-            if open_day.day < 30:  # 최대 Day 수
+            if open_day.day < max_day:  # 동적 최대 Day 수
                 next_day = open_day.day + 1
                 db.execute(
                     text("""
@@ -706,7 +806,7 @@ def get_today_card(
                 )
                 db.commit()
                 
-                # 다음 Day의 단어 다시 시도
+                # 다음 Day의 단어 다시 시도 (Perfect 단어 제외 적용)
                 vocab_stmt = (
                     select(Vocab)
                     .where(and_(Vocab.difficulty_level == difficulty_level, Vocab.day == next_day))
@@ -717,9 +817,40 @@ def get_today_card(
                             )
                         )
                     )
-                    .order_by(Vocab.id.asc())
-                    .limit(1)
                 )
+                
+                # Add exclude_perfect filter if enabled
+                if exclude_perfect:
+                    # Use raw SQL to avoid SQLAlchemy subquery issues
+                    perfect_words_query = text("""
+                        SELECT DISTINCT vocab_id 
+                        FROM study_logs sl
+                        WHERE sl.user_id = :user_id 
+                          AND sl.cycle_no < :cycle_no 
+                          AND sl.difficulty_level = :difficulty_level 
+                          AND sl.result = 'perfect'
+                          AND sl.studied_at = (
+                              SELECT MAX(studied_at)
+                              FROM study_logs
+                              WHERE user_id = :user_id 
+                                AND vocab_id = sl.vocab_id
+                                AND cycle_no < :cycle_no 
+                                AND difficulty_level = :difficulty_level
+                          )
+                    """)
+                    
+                    perfect_words_result = db.execute(perfect_words_query, {
+                        "user_id": user_id,
+                        "cycle_no": cycle.cycle_no,
+                        "difficulty_level": difficulty_level
+                    }).fetchall()
+                    
+                    perfect_vocab_ids = [row[0] for row in perfect_words_result]
+                    
+                    if perfect_vocab_ids:
+                        vocab_stmt = vocab_stmt.where(~Vocab.id.in_(perfect_vocab_ids))
+                
+                vocab_stmt = vocab_stmt.order_by(Vocab.id.asc()).limit(1)
                 vocab = db.execute(vocab_stmt).scalar_one_or_none()
                 if vocab is None:
                     raise HTTPException(status_code=404, detail="no cards available in next day")
@@ -1176,7 +1307,7 @@ def submit_review(payload: ReviewIn, db: Session = Depends(get_db)):
 
         if payload.grade == "again":
             new_level = 1
-            next_date = today
+            next_date = today + timedelta(days=1)  # 다음 날 복습으로 변경하여 진도 나가도록 수정
             progress.correct_streak = 0
             progress.wrong_count = int(progress.wrong_count or 0) + 1
         elif payload.grade == "good":
@@ -1328,7 +1459,12 @@ def complete_day(payload: CompleteDayIn, db: Session = Depends(get_db)):
         )
     ).scalar_one()
 
-    if int(completed_days) >= 30 and cycle.status == "active":
+    # 레벨별 Max Day 계산
+    max_day = db.execute(
+        select(func.max(Vocab.day)).where(Vocab.difficulty_level == payload.difficulty_level)
+    ).scalar_one() or 30
+
+    if int(completed_days) >= max_day and cycle.status == "active":
         cycle.status = "completed_pending_confirm"
         cycle.completed_at = datetime.utcnow()
         cycle_status = cycle.status
@@ -1393,7 +1529,12 @@ def get_levels_stats(user_id: int = Query(...), db: Session = Depends(get_db)):
         cycle = _get_or_create_active_cycle(db, user_id=user_id, difficulty_level=level)
         _ensure_day_rows(db, user_id=user_id, difficulty_level=level, cycle_no=cycle.cycle_no)
 
-        # Day progress (30-day 기준 완료 Day 수)
+        # 레벨별 Max Day 계산
+        max_day = db.execute(
+            select(func.max(Vocab.day)).where(Vocab.difficulty_level == level)
+        ).scalar_one() or 30
+
+        # Day progress (Max Day 기준 완료 Day 수)
         completed_days = db.execute(
             select(func.count(LevelDayProgress.id)).where(
                 and_(
@@ -1405,7 +1546,7 @@ def get_levels_stats(user_id: int = Query(...), db: Session = Depends(get_db)):
             )
         ).scalar_one()
 
-        day_progress_pct = int((int(completed_days) / 30) * 100)
+        day_progress_pct = int((int(completed_days) / max_day) * 100)
 
         # 암기율(Perfect 기반): 레벨 전체 단어 중 perfect 최종 판정 단어 수 (모든 회차의 최신 결과 기준)
         total_vocab = db.execute(select(func.count(Vocab.id)).where(Vocab.difficulty_level == level)).scalar_one()
@@ -1589,37 +1730,136 @@ def get_levels_stats(user_id: int = Query(...), db: Session = Depends(get_db)):
                     topic=topic,
                     result=res,
                     word=str(word) if word is not None else f"Day{day}단어",
-                )
             )
-
-        # Count perfect words from previous cycle for level stats
-        previous_cycle_no = cycle.cycle_no - 1
-        if previous_cycle_no > 0:
-            previous_cycle_perfect_vocab = db.execute(
-                select(func.count(StudyLog.vocab_id))
-                .join(Vocab, StudyLog.vocab_id == Vocab.id)
-                .where(
-                    and_(
-                        StudyLog.user_id == user_id,
-                        StudyLog.cycle_no == previous_cycle_no,
-                        StudyLog.difficulty_level == level,
-                        StudyLog.result == "perfect"
+        )
+        
+        # Count perfect words from ALL previous cycles with latest results (matching study page logic)
+        if cycle.cycle_no > 1:
+            # Use Raw SQL for consistency with other endpoints
+            perfect_words_query = text("""
+                SELECT DISTINCT vocab_id
+                FROM (
+                    SELECT vocab_id, result
+                    FROM study_logs sl
+                    WHERE sl.user_id = :user_id 
+                      AND sl.difficulty_level = :difficulty_level
+                      AND sl.studied_at = (
+                          SELECT MAX(studied_at)
+                          FROM study_logs
+                          WHERE user_id = :user_id 
+                            AND vocab_id = sl.vocab_id
+                            AND difficulty_level = :difficulty_level
+                      )
+                ) AS latest_results
+                WHERE latest_results.result = 'perfect'
+            """)
+            
+            perfect_words_result = db.execute(perfect_words_query, {
+                "user_id": user_id,
+                "cycle_no": cycle.cycle_no,
+                "difficulty_level": level
+            }).fetchall()
+            
+            if str(level) == "800":
+                perfect_vocab_ids = [row[0] for row in perfect_words_result]
+                perfect_vocab_words = []
+                if perfect_vocab_ids:
+                    perfect_vocab_words = db.execute(
+                        select(Vocab.id, Vocab.word)
+                        .where(Vocab.id.in_(perfect_vocab_ids))
+                        .order_by(Vocab.id)
+                    ).fetchall()
+                logger.warning(
+                    "[levels-stats debug] user_id=%s level=%s cycle_no=%s previous_cycle_perfect_vocab=%s vocab=%s",
+                    user_id,
+                    level,
+                    cycle.cycle_no,
+                    len(perfect_vocab_ids),
+                    [(int(v_id), str(word)) for (v_id, word) in perfect_vocab_words],
+                )
+                print(
+                    "[levels-stats debug] user_id=%s level=%s cycle_no=%s previous_cycle_perfect_vocab=%s vocab=%s"
+                    % (
+                        user_id,
+                        level,
+                        cycle.cycle_no,
+                        len(perfect_vocab_ids),
+                        [(int(v_id), str(word)) for (v_id, word) in perfect_vocab_words],
                     )
                 )
-            ).scalar_one()
+
+            previous_cycle_perfect_vocab = len(perfect_words_result)
         else:
             previous_cycle_perfect_vocab = 0
+
+        # 회차별 진도율 계산
+        # 1. 현재 회차에서 학습된 단어 수 계산
+        current_cycle_progressed = db.execute(
+            select(func.count(func.distinct(StudyLog.vocab_id)))
+            .where(
+                and_(
+                    StudyLog.user_id == user_id,
+                    StudyLog.difficulty_level == level,
+                    StudyLog.cycle_no == cycle.cycle_no,
+                )
+            )
+        ).scalar_one() or 0
+
+        # 2. 전 회차까지 Perfect인 단어 찾기 (최신 결과 기준으로 수정)
+        if cycle.cycle_no > 1:
+            # Use Raw SQL to match study page logic exactly
+            perfect_words_query = text("""
+                SELECT DISTINCT vocab_id
+                FROM (
+                    SELECT vocab_id, result
+                    FROM study_logs sl
+                    WHERE sl.user_id = :user_id 
+                      AND sl.difficulty_level = :difficulty_level
+                      AND sl.studied_at = (
+                          SELECT MAX(studied_at)
+                          FROM study_logs
+                          WHERE user_id = :user_id 
+                            AND vocab_id = sl.vocab_id
+                            AND difficulty_level = :difficulty_level
+                      )
+                ) AS latest_results
+                WHERE latest_results.result = 'perfect'
+            """)
+            
+            perfect_words_result = db.execute(perfect_words_query, {
+                "user_id": user_id,
+                "cycle_no": cycle.cycle_no,
+                "difficulty_level": level
+            }).fetchall()
+            
+            previous_perfect_count = len(perfect_words_result)
+        else:
+            previous_perfect_count = 0
+
+        # 3. 현재 회차에서 학습해야 할 총 단어 수 (전 회차 Perfect 제외)
+        current_cycle_total = max(0, int(total_vocab) - previous_perfect_count)
+
+        # 4. 현재 회차 진도율 계산
+        current_cycle_progress_pct = 0
+        if current_cycle_total == 0:
+            current_cycle_progress_pct = 100
+        else:
+            current_cycle_progress_pct = int((current_cycle_progressed / current_cycle_total) * 100)
 
         levels_out.append(
             LevelStatsOut(
                 difficulty_level=level,
                 cycle_no=cycle.cycle_no,
                 completed_days=int(completed_days),
+                total_days=max_day,
                 day_progress_pct=int(day_progress_pct),
                 total_vocab=int(total_vocab),
                 perfect_vocab=int(perfect_vocab),
                 previous_cycle_perfect_vocab=int(previous_cycle_perfect_vocab),
                 memorization_pct=int(memorization_pct),
+                current_cycle_progressed_words=current_cycle_progressed,
+                current_cycle_total_words=current_cycle_total,
+                current_cycle_progress_pct=current_cycle_progress_pct,
                 day_word_counts=day_word_counts,
                 recent_study=recent_study,
             )
@@ -1668,22 +1908,38 @@ def get_current_day_progress(
             )
         ).scalar_one()
 
-        # Count perfect words from study logs for previous cycle (not current cycle)
-        previous_cycle_no = cycle.cycle_no - 1
-        if previous_cycle_no > 0:
-            perfect_words = db.execute(
-                select(func.count(StudyLog.vocab_id))
-                .join(Vocab, StudyLog.vocab_id == Vocab.id)
-                .where(
-                    and_(
-                        StudyLog.user_id == user_id,
-                        StudyLog.cycle_no == previous_cycle_no,
-                        StudyLog.difficulty_level == difficulty_level,
-                        Vocab.day == day_val,
-                        StudyLog.result == "perfect"
-                    )
-                )
-            ).scalar_one()
+        # Count perfect words from ALL previous cycles with latest results (matching study page logic)
+        if cycle.cycle_no > 1:
+            # Use Raw SQL for consistency with level stats
+            perfect_words_query = text("""
+                SELECT DISTINCT vocab_id 
+                FROM study_logs sl
+                JOIN vocab v ON v.id = sl.vocab_id
+                WHERE sl.user_id = :user_id 
+                  AND sl.cycle_no < :cycle_no 
+                  AND sl.difficulty_level = :difficulty_level 
+                  AND v.day = :day_val
+                  AND sl.result = 'perfect'
+                  AND sl.cycle_no = (
+                      SELECT MAX(cycle_no)
+                      FROM study_logs sl2
+                      JOIN vocab v2 ON v2.id = sl2.vocab_id
+                      WHERE sl2.user_id = :user_id 
+                        AND sl2.vocab_id = sl.vocab_id
+                        AND sl2.cycle_no < :cycle_no 
+                        AND sl2.difficulty_level = :difficulty_level
+                        AND sl2.result = 'perfect'
+                  )
+            """)
+            
+            perfect_words_result = db.execute(perfect_words_query, {
+                "user_id": user_id,
+                "cycle_no": cycle.cycle_no,
+                "difficulty_level": difficulty_level,
+                "day_val": day_val
+            }).fetchall()
+            
+            perfect_words = len(perfect_words_result)
         else:
             perfect_words = 0  # No previous cycle
 
@@ -1700,3 +1956,186 @@ def get_current_day_progress(
         perfect_words=int(perfect_words),
         progress_pct=int(progress_pct),
     )
+
+
+# 새로운 리마인드 세션 API
+@api_router.post("/remind/session/start", response_model=RemindSessionOut)
+def start_remind_session(payload: RemindSessionStart, db: Session = Depends(get_db)):
+    user = db.get(User, payload.user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="user not found")
+
+    cycle = _get_or_create_active_cycle(db, user_id=payload.user_id, difficulty_level=payload.difficulty_level)
+    _ensure_day_rows(db, user_id=payload.user_id, difficulty_level=payload.difficulty_level, cycle_no=cycle.cycle_no)
+
+    open_day = _get_open_day(db, user_id=payload.user_id, difficulty_level=payload.difficulty_level, cycle_no=cycle.cycle_no)
+    if open_day is not None:
+        current_day = int(open_day.day)
+    else:
+        last_completed = db.execute(
+            select(func.max(LevelDayProgress.day)).where(
+                and_(
+                    LevelDayProgress.user_id == payload.user_id,
+                    LevelDayProgress.difficulty_level == payload.difficulty_level,
+                    LevelDayProgress.cycle_no == cycle.cycle_no,
+                    LevelDayProgress.status == "completed",
+                )
+            )
+        ).scalar_one()
+        current_day = int(last_completed or 1)
+
+    window_days = int(getattr(user, "remind_window_days", 5) or 5)
+    start_day = max(1, current_day - window_days + 1)
+
+    # perfect가 아닌 단어들 찾기 (최종 결과가 perfect가 아닌 단어)
+    latest_ts_subq = (
+        select(StudyLog.vocab_id.label("vocab_id"), func.max(StudyLog.studied_at).label("max_ts"))
+        .where(
+            and_(
+                StudyLog.user_id == payload.user_id,
+                StudyLog.difficulty_level == payload.difficulty_level,
+                StudyLog.cycle_no == cycle.cycle_no,
+            )
+        )
+        .group_by(StudyLog.vocab_id)
+        .subquery()
+    )
+
+    latest_logs_subq = (
+        select(StudyLog.vocab_id.label("vocab_id"), StudyLog.result.label("result"))
+        .join(
+            latest_ts_subq,
+            and_(StudyLog.vocab_id == latest_ts_subq.c.vocab_id, StudyLog.studied_at == latest_ts_subq.c.max_ts),
+        )
+        .subquery()
+    )
+
+    # perfect가 아닌 단어들만 선택
+    vocab_stmt = (
+        select(Vocab, latest_logs_subq.c.result)
+        .join(latest_logs_subq, latest_logs_subq.c.vocab_id == Vocab.id)
+        .where(
+            and_(
+                Vocab.difficulty_level == payload.difficulty_level,
+                Vocab.day.is_not(None),
+                Vocab.day >= start_day,
+                Vocab.day <= current_day,
+                latest_logs_subq.c.result != "perfect",
+            )
+        )
+        .order_by(Vocab.day.asc(), Vocab.id.asc())
+    )
+
+    rows = db.execute(vocab_stmt).all()
+    
+    if not rows:
+        # 모든 단어가 perfect 상태인지 확인
+        all_perfect_check = (
+            select(Vocab)
+            .where(
+                and_(
+                    Vocab.difficulty_level == payload.difficulty_level,
+                    Vocab.day.is_not(None),
+                    Vocab.day >= start_day,
+                    Vocab.day <= current_day,
+                )
+            )
+            .order_by(Vocab.day.asc(), Vocab.id.asc())
+        )
+        all_vocab = db.execute(all_perfect_check).all()
+        
+        if all_vocab:
+            # 단어는 있지만 모두 perfect 상태
+            raise HTTPException(
+                status_code=404, 
+                detail="모든 단어를 완벽하게 마쳤습니다. 나중에 다시 리마인드해주세요."
+            )
+        else:
+            # 해당 기간에 학습한 단어가 없음
+            raise HTTPException(
+                status_code=404, 
+                detail="리마인드할 단어가 없습니다. (최근 학습한 단어만 대상입니다)"
+            )
+
+    # 세션 생성
+    session_id = str(uuid.uuid4())
+    words = []
+    for vocab, result in rows:
+        words.append({
+            "vocab_id": vocab.id,
+            "word": vocab.word,
+            "meaning": vocab.meaning,
+            "day": vocab.day,
+            "last_result": result
+        })
+
+    session_data = {
+        "session_id": session_id,
+        "user_id": payload.user_id,
+        "difficulty_level": payload.difficulty_level,
+        "total_words": len(words),
+        "current_index": 0,
+        "completed_count": 0,
+        "words": words,
+        "start_time": datetime.utcnow()
+    }
+    
+    remind_sessions[session_id] = session_data
+
+    return RemindSessionOut(
+        session_id=session_id,
+        total_words=len(words),
+        current_index=0,
+        completed_count=0,
+        words=words
+    )
+
+
+@api_router.get("/remind/session/{session_id}/next", response_model=RemindCardOut)
+def get_next_remind_card(session_id: str, db: Session = Depends(get_db)):
+    if session_id not in remind_sessions:
+        raise HTTPException(status_code=404, detail="session not found")
+
+    session = remind_sessions[session_id]
+    
+    if session["current_index"] >= session["total_words"]:
+        raise HTTPException(status_code=404, detail="session completed")
+
+    current_word = session["words"][session["current_index"]]
+    vocab = db.get(Vocab, current_word["vocab_id"])
+    if vocab is None:
+        raise HTTPException(status_code=404, detail="vocab not found")
+
+    return RemindCardOut(
+        session_id=session_id,
+        current_index=session["current_index"],
+        total_words=session["total_words"],
+        completed_count=session["completed_count"],
+        vocab=_vocab_out_with_random_example(db, vocab=vocab),
+        is_last=session["current_index"] == session["total_words"] - 1
+    )
+
+
+@api_router.post("/remind/session/{session_id}/submit")
+def submit_remind_answer(session_id: str, submission: GradeSubmission = Body(...), db: Session = Depends(get_db)):
+    if session_id not in remind_sessions:
+        raise HTTPException(status_code=404, detail="session not found")
+
+    session = remind_sessions[session_id]
+    current_word = session["words"][session["current_index"]]
+    
+    # 기존 submit_remind_review 로직 사용
+    payload = ReviewIn(
+        user_id=session["user_id"],
+        vocab_id=current_word["vocab_id"],
+        grade=submission.grade
+    )
+    
+    # 기존 리마인드 제출 로직 호출
+    submit_remind_review(payload, db)
+    
+    # 세션 업데이트
+    session["current_index"] += 1
+    session["completed_count"] += 1  # 모든 답변을 진행으로 간주
+    
+    return {"message": "answer submitted", "next_index": session["current_index"]}

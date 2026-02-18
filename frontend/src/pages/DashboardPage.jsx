@@ -158,7 +158,7 @@ export default function DashboardPage() {
           progress: level.total_vocab > 0 ? Math.round((studiedWords / level.total_vocab) * 100) : 0, // 학습률
           completionRate: level.total_vocab > 0 ? Math.round((level.perfect_vocab / level.total_vocab) * 100) : 0, // 완성도 (Perfect 비율)
           cycles: level.cycle_no || 0, // 현재 학습 회차
-          totalDays: level.total_days || 30, // Day 정보
+          totalDays: level.total_days, // Day 정보 (동적으로 설정)
           completedDays: level.completed_days || 0, // 완료된 Day 수
           studiedDays: studiedDays, // 학습한 Day 수
           perfectWords: level.perfect_vocab || 0, // 완벽 마스터 단어 수
@@ -166,7 +166,11 @@ export default function DashboardPage() {
           // 원본 API 데이터도 유지
           day_progress_pct: level.day_progress_pct || 0,
           memorization_pct: level.memorization_pct || 0,
-          difficulty_level: level.difficulty_level
+          difficulty_level: level.difficulty_level,
+          // 새로운 회차별 진도율 필드들
+          current_cycle_progress_pct: level.current_cycle_progress_pct || 0,
+          current_cycle_total_words: level.current_cycle_total_words || 0,
+          current_cycle_progressed_words: level.current_cycle_progressed_words || 0
         };
       });
       
@@ -384,25 +388,25 @@ export default function DashboardPage() {
       </section>
 
       {/* Level Selection - Prominent Section */}
-      <section className="px-5 mt-6 max-w-md mx-auto">
-        <div className="bg-gradient-to-r from-indigo-50 to-purple-50 rounded-2xl p-4 shadow-sm border border-indigo-100/50">
+      <section className="px-5 mt-4 max-w-md mx-auto">
+        <div className="bg-gradient-to-r from-indigo-50 to-purple-50 rounded-2xl p-3 shadow-sm border border-indigo-100/50">
           <div className="mb-2">
             <h3 className="text-sm font-bold text-gray-900">학습 레벨 선택</h3>
           </div>
-          <div className="flex gap-2 flex-wrap">
+          <div className="flex gap-3 justify-center">
             {levels.map((l) => (
               <button
                 key={l.value}
-                onClick={() => handleChangeLevel(l.value)}
-                className={`px-2.5 py-1 rounded-full text-xs font-medium transition-all transform active:scale-[0.95] ${
+                onClick={() => handleLevelSelect(l.value)}
+                className={`flex-1 max-w-[100px] px-3 py-2 rounded-xl text-sm font-medium transition-all transform active:scale-[0.95] ${
                   selectedLevel === l.value
-                    ? "bg-gradient-to-r from-indigo-500 to-purple-600 text-white shadow-sm shadow-indigo-500/25"
-                    : "bg-white text-gray-700 border border-gray-200 hover:border-indigo-300"
+                    ? `bg-${l.color}-500 text-white shadow-md`
+                    : "bg-white text-gray-700 border border-gray-200 hover:bg-gray-50"
                 }`}
               >
-                <div className="flex items-center gap-1">
-                  <span className="text-xs">{l.badge === 'BEGINNER' ? '🌱' : l.badge === 'INTERMEDIATE' ? '🚀' : '🏆'}</span>
-                  <span>{l.label}</span>
+                <div className="flex flex-col items-center gap-1">
+                  <span className="text-sm">{l.badge === 'BEGINNER' ? '🌱' : l.badge === 'INTERMEDIATE' ? '🚀' : '🏆'}</span>
+                  <span className="text-xs font-medium">{l.label}</span>
                 </div>
               </button>
             ))}
@@ -410,39 +414,33 @@ export default function DashboardPage() {
         </div>
       </section>
 
-      <main className="px-5 mt-6 max-w-md mx-auto space-y-8">
+      <main className="px-5 mt-4 max-w-md mx-auto space-y-6">
         {/* Quick Actions */}
-        <section className="grid grid-cols-1 gap-4">
+        <section className="grid grid-cols-2 gap-4">
           <Link
             to={`/study?difficulty_level=${encodeURIComponent(selectedLevel)}`}
-            className="group relative overflow-hidden bg-white rounded-[32px] p-6 shadow-[0_10px_25px_-5px_rgba(0,0,0,0.05),0_8px_10px_-6px_rgba(0,0,0,0.05)] border border-gray-100/50 flex items-center justify-between active:scale-[0.98] transition-transform"
+            className="group relative overflow-hidden bg-white rounded-[32px] p-4 shadow-[0_10px_25px_-5px_rgba(0,0,0,0.05),0_8px_10px_-6px_rgba(0,0,0,0.05)] border border-gray-100/50 flex flex-col items-center justify-center active:scale-[0.98] transition-transform"
           >
-            <div className="flex items-center gap-5">
-              <div className="w-16 h-16 bg-blue-50 rounded-[22px] flex items-center justify-center">
-                <span className="material-symbols-outlined text-blue-600 text-3xl">school</span>
-              </div>
-              <div>
-                <h4 className="font-bold text-xl text-gray-900">학습하기</h4>
-                <p className="text-sm text-gray-500">선택한 레벨 집중 학습</p>
-              </div>
+            <div className="w-12 h-12 bg-blue-50 rounded-[22px] flex items-center justify-center mb-2">
+              <span className="material-symbols-outlined text-blue-600 text-2xl">school</span>
             </div>
-            <span className="material-symbols-outlined text-gray-300">chevron_right</span>
+            <div className="text-center">
+              <h4 className="font-bold text-sm text-gray-900">학습하기</h4>
+              <p className="text-xs text-gray-500 mt-1">선택 레벨 학습</p>
+            </div>
           </Link>
 
           <Link
             to={`/remind?difficulty_level=${encodeURIComponent(selectedLevel)}`}
-            className="group relative overflow-hidden bg-white rounded-[32px] p-6 shadow-[0_10px_25px_-5px_rgba(0,0,0,0.05),0_8px_10px_-6px_rgba(0,0,0,0.05)] border border-gray-100/50 flex items-center justify-between active:scale-[0.98] transition-transform"
+            className="group relative overflow-hidden bg-white rounded-[32px] p-4 shadow-[0_10px_25px_-5px_rgba(0,0,0,0.05),0_8px_10px_-6px_rgba(0,0,0,0.05)] border border-gray-100/50 flex flex-col items-center justify-center active:scale-[0.98] transition-transform"
           >
-            <div className="flex items-center gap-5">
-              <div className="w-16 h-16 bg-orange-50 rounded-[22px] flex items-center justify-center">
-                <span className="material-symbols-outlined text-orange-500 text-3xl">history</span>
-              </div>
-              <div>
-                <h4 className="font-bold text-xl text-gray-900">리마인드</h4>
-                <p className="text-sm text-gray-500">틀린 단어 7일 복습</p>
-              </div>
+            <div className="w-12 h-12 bg-orange-50 rounded-[22px] flex items-center justify-center mb-2">
+              <span className="material-symbols-outlined text-orange-500 text-2xl">history</span>
             </div>
-            <span className="material-symbols-outlined text-gray-300">chevron_right</span>
+            <div className="text-center">
+              <h4 className="font-bold text-sm text-gray-900">리마인드</h4>
+              <p className="text-xs text-gray-500 mt-1">틀린 단어 복습</p>
+            </div>
           </Link>
         </section>
 
@@ -460,35 +458,13 @@ export default function DashboardPage() {
           </button>
         </section>
 
-        {/* Level Selection */}
-        <section>
-          <div className="flex items-baseline justify-between mb-4 px-1">
-            <h3 className="text-lg font-bold text-gray-900">목표 점수</h3>
-            <span className="text-xs text-blue-500 font-medium">난이도 설정</span>
-          </div>
-          <div className="flex gap-3 overflow-x-auto no-scrollbar py-1">
-            {levels.map((l) => (
-              <button
-                key={l.value}
-                onClick={() => handleLevelSelect(l.value)}
-                className={`flex-shrink-0 px-6 py-2.5 rounded-2xl bg-white border shadow-sm font-medium text-sm transition-colors ${
-                  selectedLevel === l.value
-                    ? `border-${l.color}-500 text-${l.color}-600 font-bold`
-                    : "border-gray-100 text-gray-500"
-                }`}
-              >
-                {l.label}
-              </button>
-            ))}
-          </div>
-        </section>
-
         {/* Level Progress */}
         <section>
-          <h3 className="text-lg font-bold text-gray-900 mb-4 px-1">레벨별 학습 현황</h3>
-          <div className="space-y-4">
+          <h3 className="text-lg font-bold text-gray-900 mb-3 px-1">레벨별 학습 현황</h3>
+          <div className="space-y-3">
             {levels.map((l) => {
               const levelData = stats?.levels?.find((lvl) => lvl.difficulty_level === l.value);
+              const levelStatsData = stats?.levelsStats?.find((lvl) => lvl.difficulty_level === l.value);
               const progress = levelData?.progress ?? 0;
               const completionRate = levelData?.completionRate ?? 0;
               const total = levelData?.total ?? 0;
@@ -513,13 +489,14 @@ export default function DashboardPage() {
               });
               
               // Calculate adjusted progress when Perfect exclusion is enabled
-              const adjustedProgress = excludePerfect && previousCyclePerfect > 0 
-                ? Math.round((progress * total) / Math.max(1, total - previousCyclePerfect))
-                : progress;
+              // Use backend-calculated cycle-based progress instead of frontend calculation
+              const adjustedProgress = excludePerfect && levelData.current_cycle_total_words < levelData.total
+                ? levelData.current_cycle_progress_pct
+                : levelData.day_progress_pct;
               
               return (
-                <div key={l.value} className="bg-white rounded-[24px] p-5 shadow-[0_4px_16px_rgba(0,0,0,0.04)] border border-gray-100/50">
-                  <div className="flex justify-between items-center mb-3">
+                <div key={l.value} className="bg-white rounded-[24px] p-4 shadow-[0_4px_16px_rgba(0,0,0,0.04)] border border-gray-100/50">
+                  <div className="flex justify-between items-center mb-2">
                     <div>
                       <span className={`text-[10px] font-bold bg-${l.color}-50 text-${l.color}-600 px-2 py-1 rounded-md mr-2`}>
                         {l.badge}
@@ -529,29 +506,28 @@ export default function DashboardPage() {
                     </div>
                     <div className="text-right">
                       <div className="text-lg font-bold text-gray-900">
-                        {excludePerfect && previousCyclePerfect > 0 ? adjustedProgress : progress}%
+                        {adjustedProgress}%
                       </div>
                       <div className="text-xs text-gray-500">
                         완성도 {completionRate}%
-                        {excludePerfect && previousCyclePerfect > 0 && (
+                        {excludePerfect && levelData.current_cycle_total_words < levelData.total && (
                           <span className="text-amber-600 ml-1">(Perfect 제외)</span>
                         )}
                       </div>
                     </div>
                   </div>
-                  
-                  <div className="relative h-2 w-full bg-gray-100 rounded-full overflow-hidden mb-3">
+                  <div className="relative h-2 w-full bg-gray-100 rounded-full overflow-hidden mb-2">
                     <div 
                       className={`absolute top-0 left-0 h-full bg-${l.color}-500 rounded-full transition-all duration-500`} 
-                      style={{ width: `${excludePerfect && previousCyclePerfect > 0 ? adjustedProgress : progress}%` }}
+                      style={{ width: `${adjustedProgress}%` }}
                     />
                   </div>
                   
-                  <div className="flex justify-between items-center text-[11px] text-gray-500 font-medium">
+                  <div className="flex justify-between text-xs text-gray-500">
                     <div className="flex gap-3">
                       <span>현재 Day {completedDays + 1}</span>
                       <span>Perfect {perfect}</span>
-                      <span>전체 {excludePerfect && previousCyclePerfect > 0 ? `${total - previousCyclePerfect} (제외 ${previousCyclePerfect})` : total}</span>
+                      <span>전체 {excludePerfect && levelData.current_cycle_total_words < levelData.total ? `${levelData.current_cycle_total_words} (제외 ${levelData.total - levelData.current_cycle_total_words})` : `${total}`}</span>
                     </div>
                     <button
                       onClick={() => toggleLevelDetail(l.value)}
@@ -688,8 +664,8 @@ export default function DashboardPage() {
       </main>
 
       {/* Perfect Words Exclusion Setting */}
-      <section className="px-5 mt-6 mb-24 max-w-md mx-auto">
-        <div className="bg-gradient-to-r from-amber-50 to-orange-50 rounded-2xl p-4 shadow-sm border border-amber-100/50">
+      <section className="px-5 mt-4 mb-20 max-w-md mx-auto">
+        <div className="bg-gradient-to-r from-amber-50 to-orange-50 rounded-2xl p-3 shadow-sm border border-amber-100/50">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <div>
