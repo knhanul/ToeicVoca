@@ -2007,7 +2007,7 @@ def get_current_day_progress(
 
 # 새로운 리마인드 세션 API
 def _get_remind_words_from_range(db, user_id, difficulty_level, cycle_no, start_day, end_day):
-    """특정 Day 범위와 회차에서 perfect가 아닌 단어들을 추출하는 헬퍼 함수"""
+    """특정 Day 범위와 회차에서 perfect가 아닌 단어들을 추출하는 헬퍼 함수 (again 우선)"""
     # perfect가 아닌 단어들 찾기 (최종 결과가 perfect가 아닌 단어)
     latest_ts_subq = (
         select(StudyLog.vocab_id.label("vocab_id"), func.max(StudyLog.studied_at).label("max_ts"))
@@ -2031,8 +2031,8 @@ def _get_remind_words_from_range(db, user_id, difficulty_level, cycle_no, start_
         .subquery()
     )
 
-    # perfect가 아닌 단어들만 선택
-    vocab_stmt = (
+    # again 단어들 우선 선택 (result == 'again')
+    again_vocab_stmt = (
         select(Vocab, latest_logs_subq.c.result)
         .join(latest_logs_subq, latest_logs_subq.c.vocab_id == Vocab.id)
         .where(
@@ -2041,13 +2041,33 @@ def _get_remind_words_from_range(db, user_id, difficulty_level, cycle_no, start_
                 Vocab.day.is_not(None),
                 Vocab.day >= start_day,
                 Vocab.day <= end_day,
-                latest_logs_subq.c.result != "perfect",
+                latest_logs_subq.c.result == "again",
             )
         )
         .order_by(Vocab.day.asc(), Vocab.id.asc())
     )
 
-    return db.execute(vocab_stmt).all()
+    # good 단어들 선택 (result == 'good')
+    good_vocab_stmt = (
+        select(Vocab, latest_logs_subq.c.result)
+        .join(latest_logs_subq, latest_logs_subq.c.vocab_id == Vocab.id)
+        .where(
+            and_(
+                Vocab.difficulty_level == difficulty_level,
+                Vocab.day.is_not(None),
+                Vocab.day >= start_day,
+                Vocab.day <= end_day,
+                latest_logs_subq.c.result == "good",
+            )
+        )
+        .order_by(Vocab.day.asc(), Vocab.id.asc())
+    )
+
+    # again 단어들 먼저, good 단어들 나중에 합쳐서 반환
+    again_words = db.execute(again_vocab_stmt).all()
+    good_words = db.execute(good_vocab_stmt).all()
+    
+    return again_words + good_words
 
 
 def _get_remind_words_from_range_with_result(db, user_id, difficulty_level, cycle_no, start_day, end_day, result_value):
