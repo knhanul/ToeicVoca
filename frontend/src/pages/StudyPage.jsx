@@ -115,12 +115,6 @@ export default function StudyPage() {
   }, [userId, selectedLevel]);
 
   const ensureOpenDay = useCallback(async () => {
-    // Check if we should prevent dialogs (user navigated to dashboard)
-    if (localStorage.getItem('prevent_study_dialogs') === 'true') {
-      localStorage.removeItem('prevent_study_dialogs');
-      throw new Error("User navigated away, preventing further dialogs");
-    }
-    
     const level = await fetchLevelStatus();
     setDayInfo(level);
 
@@ -163,7 +157,6 @@ export default function StudyPage() {
         }
         
         // Navigate to dashboard instead of reload
-        localStorage.setItem('prevent_study_dialogs', 'true');
         navigate("/dashboard");
         return;
       } else {
@@ -240,7 +233,6 @@ export default function StudyPage() {
             }
             
             // Navigate to dashboard instead of reload
-            localStorage.setItem('prevent_study_dialogs', 'true');
             navigate("/dashboard");
             return;
           }
@@ -285,7 +277,6 @@ export default function StudyPage() {
               }
               
               // Navigate to dashboard instead of reload
-              localStorage.setItem('prevent_study_dialogs', 'true');
               navigate("/dashboard");
               return;
             }
@@ -314,13 +305,12 @@ export default function StudyPage() {
         }
       } catch (e) {
         if (!isMounted) return;
-        console.error("Load next card error:", e);
+        console.log("Load next card error:", e);
         
-        // Don't retry if user explicitly cancelled or navigated away
+        // Don't retry if user explicitly cancelled
         if (e.message.includes("회독 완료를 나중에 확인할 수 있습니다") || 
-            e.message.includes("오늘 학습을 시작하지 않았습니다") ||
-            e.message.includes("User navigated away, preventing further dialogs")) {
-          // User cancelled or navigated away, don't retry
+            e.message.includes("오늘 학습을 시작하지 않았습니다")) {
+          // User cancelled, don't retry
           setError(e.message);
           setLoading(false);
           return;
@@ -424,8 +414,7 @@ export default function StudyPage() {
   };
 
   const handleBackToDashboard = () => {
-    // Set flag to prevent any further confirm dialogs
-    localStorage.setItem('prevent_study_dialogs', 'true');
+    // Navigate to dashboard
     navigate("/dashboard");
   };
 

@@ -636,8 +636,58 @@ def get_today_card(
     _ensure_day_rows(db, user_id=user_id, difficulty_level=difficulty_level, cycle_no=cycle.cycle_no)
 
     open_day = _get_open_day(db, user_id=user_id, difficulty_level=difficulty_level, cycle_no=cycle.cycle_no)
+    print(f"DEBUG: open_day for {difficulty_level} cycle {cycle.cycle_no}: {open_day}")
+    
     if open_day is None:
-        raise HTTPException(status_code=400, detail="today learning day is not open")
+        # Check if cycle is completed and auto-start next cycle
+        completed_days = db.execute(
+            select(func.count(LevelDayProgress.id)).where(
+                and_(
+                    LevelDayProgress.user_id == user_id,
+                    LevelDayProgress.difficulty_level == difficulty_level,
+                    LevelDayProgress.cycle_no == cycle.cycle_no,
+                    LevelDayProgress.status == "completed",
+                )
+            )
+        ).scalar_one()
+        
+        max_day = db.execute(
+            select(func.max(Vocab.day)).where(Vocab.difficulty_level == difficulty_level)
+        ).scalar_one() or 30
+        
+        print(f"DEBUG: completed_days={completed_days}, max_day={max_day}")
+        
+        # If all days completed, auto-start next cycle
+        if int(completed_days) >= max_day:
+            print(f"DEBUG: Auto-starting next cycle for {difficulty_level}")
+            # Complete current cycle and start next one
+            cycle.status = "completed_pending_confirm"
+            cycle.completed_at = datetime.utcnow()
+            db.add(cycle)
+            db.commit()
+            
+            # Create new cycle
+            new_cycle = LevelCycle(
+                user_id=user_id,
+                difficulty_level=difficulty_level,
+                cycle_no=cycle.cycle_no + 1,
+                status="active",
+                started_at=datetime.utcnow()
+            )
+            db.add(new_cycle)
+            db.commit()
+            
+            # Initialize new cycle days
+            _ensure_day_rows(db, user_id=user_id, difficulty_level=difficulty_level, cycle_no=new_cycle.cycle_no)
+            
+            # Get open_day from new cycle
+            open_day = _get_open_day(db, user_id=user_id, difficulty_level=difficulty_level, cycle_no=new_cycle.cycle_no)
+            cycle = new_cycle
+            print(f"DEBUG: New cycle created, open_day: {open_day}")
+        
+        if open_day is None:
+            print(f"DEBUG: Still no open_day for {difficulty_level}")
+            raise HTTPException(status_code=400, detail="today learning day is not open")
 
     today = date.today()
 

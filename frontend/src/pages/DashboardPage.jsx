@@ -240,6 +240,54 @@ export default function DashboardPage() {
     }
   };
 
+  const handleStudyClick = async (levelValue) => {
+    // Check if previous cycle is completed and auto-start next cycle
+    try {
+      const qs = new URLSearchParams({ user_id: String(user?.id || 1) });
+      const r = await fetch(`${API_BASE}/levels/status?${qs.toString()}`);
+      if (r.ok) {
+        const data = await r.json();
+        const level = data.levels?.find((l) => String(l.difficulty_level) === String(levelValue));
+        
+        console.log("handleStudyClick - level data:", level);
+        console.log("handleStudyClick - open_day:", level?.open_day);
+        console.log("handleStudyClick - cycle_status:", level?.cycle_status);
+        console.log("handleStudyClick - completed_days:", level?.completed_days);
+        console.log("handleStudyClick - total_days:", level?.total_days);
+        
+        // Check if current cycle is completed (no open day and cycle is active)
+        if (level && (!level.open_day || level.open_day === null) && level.cycle_status === "active") {
+          console.log("handleStudyClick - triggering next cycle dialog");
+          const ok = window.confirm("🎉 30일 학습을 모두 완료했습니다! 다음 회독을 시작하시겠습니까?");
+          if (!ok) return;
+          
+          const completeR = await fetch(`${API_BASE}/levels/day/complete`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ user_id: user?.id || 1, difficulty_level: levelValue, day: 30 }),
+          });
+          
+          if (completeR.ok) {
+            const completeData = await completeR.json();
+            if (completeData.message) {
+              alert(completeData.message);
+            }
+            // Reload stats before navigation
+            await loadStats();
+            await loadDetailStats(levelValue);
+          }
+        } else {
+          console.log("handleStudyClick - cycle not completed, navigating to study");
+        }
+      }
+    } catch (error) {
+      console.error("Error checking cycle status:", error);
+    }
+    
+    // Navigate to study page
+    navigate(`/study?difficulty_level=${encodeURIComponent(levelValue)}`);
+  };
+
   const handleLevelSelect = (levelValue) => {
     setSelectedLevel(levelValue);
     localStorage.setItem("selectedDifficultyLevel", levelValue);
@@ -417,8 +465,8 @@ export default function DashboardPage() {
       <main className="px-5 mt-4 max-w-md mx-auto space-y-6">
         {/* Quick Actions */}
         <section className="grid grid-cols-2 gap-4">
-          <Link
-            to={`/study?difficulty_level=${encodeURIComponent(selectedLevel)}`}
+          <button
+            onClick={() => handleStudyClick(selectedLevel)}
             className="group relative overflow-hidden bg-white rounded-[32px] p-4 shadow-[0_10px_25px_-5px_rgba(0,0,0,0.05),0_8px_10px_-6px_rgba(0,0,0,0.05)] border border-gray-100/50 flex flex-col items-center justify-center active:scale-[0.98] transition-transform"
           >
             <div className="w-12 h-12 bg-blue-50 rounded-[22px] flex items-center justify-center mb-2">
@@ -428,7 +476,7 @@ export default function DashboardPage() {
               <h4 className="font-bold text-sm text-gray-900">학습하기</h4>
               <p className="text-xs text-gray-500 mt-1">선택 레벨 학습</p>
             </div>
-          </Link>
+          </button>
 
           <Link
             to={`/remind?difficulty_level=${encodeURIComponent(selectedLevel)}`}
