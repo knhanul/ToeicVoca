@@ -19,6 +19,7 @@ export default function StudyPage() {
   const [user, setUser] = useState(null);
   const [dayInfo, setDayInfo] = useState(null);
   const [dayProgress, setDayProgress] = useState(null);
+  const [syncingDayProgress, setSyncingDayProgress] = useState(false);
   const [excludePerfectWords, setExcludePerfectWords] = useState({});
   const [excludePerfect, setExcludePerfect] = useState(
     () => localStorage.getItem("excludePerfect") === "true"
@@ -290,19 +291,6 @@ export default function StudyPage() {
         }
         const data = await r.json();
         if (isMounted) setCard(data);
-        
-        // 카드 로드 후 Day 정보도 업데이트
-        if (data.vocab?.day && isMounted) {
-          try {
-            const dayResponse = await fetch(`${API_BASE}/stats/current-day?user_id=${userId}&difficulty_level=${selectedLevel}`);
-            if (dayResponse.ok) {
-              const dayData = await dayResponse.json();
-              if (isMounted) setDayProgress(dayData);
-            }
-          } catch (e) {
-            console.error("Failed to load day progress:", e);
-          }
-        }
       } catch (e) {
         if (!isMounted) return;
         console.log("Load next card error:", e);
@@ -332,6 +320,34 @@ export default function StudyPage() {
       loadNext();
     }
   }, [user]); // loadNext 제거
+
+  useEffect(() => {
+    const cardDay = card?.vocab?.day;
+    if (!cardDay) return;
+    if (!dayProgress?.day) return;
+
+    if (dayProgress.day === cardDay) return;
+
+    setSyncingDayProgress(true);
+    const qs = new URLSearchParams({ user_id: String(userId), difficulty_level: selectedLevel });
+    fetch(`${API_BASE}/stats/current-day?${qs.toString()}`)
+      .then(async (r) => {
+        if (!r.ok) {
+          const data = await r.json().catch(() => ({}));
+          throw new Error(data.detail || "failed to load current day progress");
+        }
+        return r.json();
+      })
+      .then((data) => {
+        setDayProgress(data);
+      })
+      .catch((e) => {
+        console.warn("Failed to sync day progress:", e);
+      })
+      .finally(() => {
+        setSyncingDayProgress(false);
+      });
+  }, [card?.vocab?.day, dayProgress?.day, selectedLevel, userId]);
 
   // Cleanup on unmount to prevent background requests
   useEffect(() => {
@@ -386,25 +402,8 @@ export default function StudyPage() {
         return r.json();
       })
       .then(() => {
-        // 현재 진행률 확인
-        const totalWords = dayProgress?.total_words || 0;
-        const studiedWords = (dayProgress?.progressed_words || 0) + 1; // 현재 단어 포함
-        
-        if (studiedWords >= totalWords) {
-          // Day 완료 확인 모달 표시
-          if (window.confirm(`Day ${dayProgress?.day} 학습이 완료되었습니다! 다음 Day 학습을 시작하시겠습니까?`)) {
-            // 다음 Day로 이동 - 상태 초기화 후 로드
-            setDayProgress(null);
-            setCard(null);
-            setError(null);
-            loadNext();
-          } else {
-            // 대시보드로 이동
-            handleBackToDashboard();
-          }
-        } else {
-          loadNext();
-        }
+        // 다음 카드 로드 (/cards/today 내부에서 Day 완료/전환이 일어나므로 먼저 카드를 갱신)
+        loadNext();
       })
       .catch((e) => {
         console.error("Study review error:", e);
@@ -433,22 +432,30 @@ export default function StudyPage() {
   return (
     <div className="min-h-screen bg-[#F8F9FA] pb-24">
       {/* 1. 상단 헤더: 사용자 정보와 현재 상태 */}
-      <div className="sticky top-0 z-50 bg-gradient-to-r from-blue-50 to-indigo-50 backdrop-blur-md px-6 py-4 flex items-center justify-between border-b border-blue-100/50">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={handleBackToDashboard}
-            className="p-2 bg-white/80 rounded-xl shadow-sm border border-blue-100/80 backdrop-blur-sm"
-          >
-            <ArrowLeft size={20} className="text-blue-700" />
-          </button>
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shadow-sm">
-              <User size={18} className="text-white" />
+      <div className="sticky top-0 z-50 bg-gradient-to-r from-blue-600 to-indigo-600 backdrop-blur-md px-6 py-6 border-b border-blue-500/20 shadow-lg">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <button
+              onClick={handleBackToDashboard}
+              className="p-3 bg-white/20 rounded-xl shadow-sm border border-white/30 backdrop-blur-sm hover:bg-white/30 transition-all"
+            >
+              <ArrowLeft size={20} className="text-white" />
+            </button>
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 rounded-full bg-gradient-to-br from-white to-blue-50 flex items-center justify-center shadow-lg border-2 border-white/30">
+                <User size={20} className="text-blue-600" />
+              </div>
+              <div>
+                <div className="text-xl font-bold text-white">{user.username || '학습자'} 님</div>
+              </div>
             </div>
-            <div className="flex items-center gap-2">
-              <div className="text-lg font-bold text-gray-900">{user.username || '학습자'} 님</div>
-              <div className="text-sm font-medium text-blue-600">
-                학습하기 {dayInfo?.open_day ? `• Day ${dayInfo.open_day} 진행중` : '• 시작하기'}
+          </div>
+          
+          <div className="flex items-center gap-6">
+            <div className="text-right">
+              <div className="text-lg font-bold text-white">학습하기</div>
+              <div className="text-sm text-blue-100 font-medium">
+                {selectedLevel}점대 • {dayInfo?.open_day ? `Day ${dayInfo.open_day} 학습중` : '학습 준비중'}
               </div>
             </div>
           </div>
@@ -605,7 +612,7 @@ export default function StudyPage() {
               </div>
 
       {/* 7. Day Progress - 하단 고정 */}
-      {dayProgress && dayProgress.day ? (
+      {dayProgress && dayProgress.day && !syncingDayProgress && card?.vocab?.day === dayProgress.day ? (
         <div className="fixed bottom-20 left-0 right-0 bg-white/95 backdrop-blur-xl border-t border-blue-100/50 px-6 py-2">
           <div className="flex justify-between items-center mb-3">
             <div className="text-sm font-bold text-gray-900">

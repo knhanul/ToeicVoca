@@ -1,5 +1,6 @@
 from datetime import date, datetime
 
+from hashlib import sha256
 from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, String, Text, JSON
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -13,6 +14,7 @@ class User(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     username: Mapped[str] = mapped_column(String(50), unique=True, index=True, nullable=False)
+    email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     current_level: Mapped[str | None] = mapped_column(String(20), nullable=True)
     remind_window_days: Mapped[int] = mapped_column(Integer, default=5, nullable=False)
@@ -21,6 +23,14 @@ class User(Base):
 
     study_logs: Mapped[list["StudyLog"]] = relationship(back_populates="user")
     progress: Mapped[list["UserProgress"]] = relationship(back_populates="user")
+
+    def set_password(self, password: str):
+        """Set password hash from plain text password"""
+        self.password_hash = sha256(password.encode()).hexdigest()
+
+    def verify_password(self, password: str) -> bool:
+        """Verify plain text password against stored hash"""
+        return self.password_hash == sha256(password.encode()).hexdigest()
 
 
 class Vocab(Base):

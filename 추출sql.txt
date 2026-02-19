@@ -1,0 +1,10 @@
+select v.*
+      ,sl.cycle_no
+	  ,sl.result
+from vocab v 
+	,study_logs sl 
+where v.id = sl.vocab_id 
+ and  v.difficulty_level = '800'
+ and  sl.studied_at = (select max(studied_at)
+ 						 from study_logs sl2
+ 						where sl2.vocab_id = v.id )

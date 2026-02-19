@@ -71,11 +71,6 @@ export default function RemindPage() {
         })
         .then((newCard) => {
           setCard(newCard);
-          setSession(prev => ({
-            ...prev,
-            current_index: newCard.current_index,
-            completed_count: newCard.completed_count
-          }));
         })
         .catch((e) => {
           console.error("Load next card error:", e);
@@ -180,6 +175,7 @@ export default function RemindPage() {
         return r.json();
       })
       .then((result) => {
+        // 성공적으로 제출 후에만 세션 업데이트
         if (result.next_index >= session.total_words) {
           // 세션 완료
           if (window.confirm("리마인드 세션이 완료되었습니다! 다시 리마인드 학습을 시작하시겠습니까?")) {
@@ -253,7 +249,35 @@ export default function RemindPage() {
             handleBackToDashboard();
           }
         } else {
-          loadNext();
+          // 다음 카드 로드
+          fetch(`${API_BASE}/remind/session/${session.session_id}/next`)
+            .then(async (r) => {
+              if (!r.ok) {
+                const data = await r.json().catch(() => ({}));
+                if (r.status === 404) {
+                  throw new Error(data.detail || "세션이 완료되었습니다.");
+                }
+                throw new Error(data.detail || "failed to load next card");
+              }
+              return r.json();
+            })
+            .then((newCard) => {
+              setCard(newCard);
+              // 세션 정보 업데이트
+              setSession(prev => ({
+                ...prev,
+                current_index: newCard.current_index,
+                completed_count: newCard.completed_count
+              }));
+            })
+            .catch((e) => {
+              console.error("Load next card error:", e);
+              setCard(null);
+              setError(e.message);
+            })
+            .finally(() => {
+              setLoading(false);
+            });
         }
       })
       .catch((e) => {
@@ -284,22 +308,30 @@ export default function RemindPage() {
   return (
     <div className="min-h-screen bg-[#F8F9FA] pb-24">
       {/* 1. 상단 헤더: 사용자 정보와 현재 상태 */}
-      <div className="sticky top-0 z-50 bg-gradient-to-r from-orange-50 to-amber-50 backdrop-blur-xl px-6 py-4 flex items-center justify-between border-b border-orange-100/50">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={handleBackToDashboard}
-            className="p-2.5 bg-white/80 rounded-2xl shadow-sm border border-orange-100/80 backdrop-blur-sm transition-all duration-200 hover:shadow-md hover:bg-white hover:scale-105"
-          >
-            <ArrowLeft size={20} className="text-orange-700" />
-          </button>
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-orange-500/90 to-red-600/90 flex items-center justify-center shadow-sm backdrop-blur-sm">
-              <RefreshCw size={18} className="text-white" />
+      <div className="sticky top-0 z-50 bg-gradient-to-r from-orange-600 to-red-600 backdrop-blur-md px-6 py-6 border-b border-orange-500/20 shadow-lg">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <button
+              onClick={handleBackToDashboard}
+              className="p-3 bg-white/20 rounded-xl shadow-sm border border-white/30 backdrop-blur-sm hover:bg-white/30 transition-all"
+            >
+              <ArrowLeft size={20} className="text-white" />
+            </button>
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 rounded-full bg-gradient-to-br from-white to-orange-50 flex items-center justify-center shadow-lg border-2 border-white/30">
+                <RefreshCw size={20} className="text-orange-600" />
+              </div>
+              <div>
+                <div className="text-xl font-bold text-white">{user.username || '학습자'} 님</div>
+              </div>
             </div>
-            <div className="flex items-center gap-2">
-              <div className="text-lg font-bold text-gray-900">{user.username || '학습자'} 님</div>
-              <div className="text-sm font-medium text-orange-600">
-                리마인드 • 복습하기
+          </div>
+          
+          <div className="flex items-center gap-6">
+            <div className="text-right">
+              <div className="text-lg font-bold text-white">리마인드</div>
+              <div className="text-sm text-orange-100 font-medium">
+                {selectedLevel}점대 • {session ? `${session.completed_count + 1}/${session.total_words} 진행중` : '복습 준비중'}
               </div>
             </div>
           </div>

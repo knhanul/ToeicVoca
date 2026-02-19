@@ -6,6 +6,18 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict
 
 
+class UserOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    username: str
+    email: str | None = None
+    current_level: str | None = None
+    remind_window_days: int = 5
+    exclude_perfect_settings: dict | None = None
+    created_at: datetime
+
+
 class VocabOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

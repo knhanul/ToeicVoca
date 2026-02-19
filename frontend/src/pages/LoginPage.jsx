@@ -54,7 +54,9 @@ export default function LoginPage() {
 
       const user = await response.json();
       console.log("Login successful:", user);
-      localStorage.setItem("user", JSON.stringify({ id: user.id, username: user.username }));
+      console.log("User data keys:", Object.keys(user));
+      // 전체 사용자 데이터 저장
+      localStorage.setItem("user", JSON.stringify(user));
       navigate("/dashboard");
     } catch (err) {
       console.error("Login error:", err);

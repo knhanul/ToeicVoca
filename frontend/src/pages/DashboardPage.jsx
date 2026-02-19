@@ -1,5 +1,6 @@
 import { useMemo, useState, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { Home, BookOpen, History, User } from "lucide-react";
 
 const API_BASE = "http://localhost:4000/api"; // Force direct connection
 
@@ -17,13 +18,25 @@ export default function DashboardPage() {
     () => [
       { value: "600", label: "600점대", color: "blue", badge: "BEGINNER" },
       { value: "800", label: "800점대", color: "green", badge: "INTERMEDIATE" },
-      { value: "900", label: "900점대", color: "purple", badge: "ADVANCED" },
+      { value: "900", label: "900점대", color: "red", badge: "ADVANCED" },
     ],
     []
   );
 
   const [selectedLevel, setSelectedLevel] = useState(
-    () => localStorage.getItem("selectedDifficultyLevel") || "800"
+    () => {
+      const savedLevel = localStorage.getItem("selectedDifficultyLevel");
+      if (savedLevel) return savedLevel;
+      
+      // If no saved level, try to get last studied level from user data
+      const storedUser = localStorage.getItem("user");
+      if (storedUser) {
+        const userData = JSON.parse(storedUser);
+        return userData.last_studied_level || userData.current_level || "800";
+      }
+      
+      return "800"; // Default fallback
+    }
   );
 
   const [excludePerfect, setExcludePerfect] = useState(
@@ -72,6 +85,28 @@ export default function DashboardPage() {
         }
       };
       loadSettings();
+      
+      // Load last studied level from backend
+      const loadLastStudiedLevel = async () => {
+        try {
+          const qs = new URLSearchParams({ user_id: String(user.id) });
+          const r = await fetch(`${API_BASE}/user/last-studied-level?${qs.toString()}`);
+          if (r.ok) {
+            const data = await r.json();
+            const lastLevel = data.last_studied_level;
+            
+            // Only update if no saved level in localStorage
+            const savedLevel = localStorage.getItem("selectedDifficultyLevel");
+            if (!savedLevel) {
+              setSelectedLevel(lastLevel);
+              localStorage.setItem("selectedDifficultyLevel", lastLevel);
+            }
+          }
+        } catch (e) {
+          console.warn("Failed to load last studied level:", e);
+        }
+      };
+      loadLastStudiedLevel();
     }
   }, [user]);
 
@@ -400,19 +435,16 @@ export default function DashboardPage() {
       {/* Header */}
       <header className="sticky top-0 z-50 bg-white/80 backdrop-blur-md px-5 py-4 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-full bg-gradient-to-br from-gray-800 to-black flex items-center justify-center text-white font-bold shadow-sm">
+          <button 
+            onClick={() => navigate("/profile")}
+            className="w-10 h-10 rounded-full bg-gradient-to-br from-gray-800 to-black flex items-center justify-center text-white font-bold shadow-sm hover:from-gray-700 hover:to-gray-900 transition-colors"
+          >
             {user?.username?.charAt(0).toUpperCase() || "U"}
-          </div>
+          </button>
           <div>
             <p className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold">Welcome back</p>
             <h2 className="text-sm font-bold text-gray-900">{user?.username}님</h2>
           </div>
-        </div>
-        <div className="flex items-center gap-4 text-gray-500">
-          <button className="relative bg-gray-100 p-2 rounded-full">
-            <span className="material-symbols-outlined text-[22px] block">notifications</span>
-            <span className="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full border-2 border-white"></span>
-          </button>
         </div>
       </header>
 
@@ -746,24 +778,35 @@ export default function DashboardPage() {
       </section>
 
       {/* Bottom Navigation */}
-      <nav className="fixed bottom-0 left-0 right-0 bg-white/90 backdrop-blur-xl shadow-[0_-0.5px_0_0_rgba(0,0,0,0.1)] px-6 pb-8 pt-3 flex justify-between items-center z-50">
-        <button className="flex flex-col items-center gap-1 text-blue-600">
-          <span className="material-symbols-outlined fill-1">home</span>
-          <span className="text-[10px] font-bold">홈</span>
-        </button>
-        <button className="flex flex-col items-center gap-1 text-gray-400">
-          <span className="material-symbols-outlined">menu_book</span>
-          <span className="text-[10px] font-medium">학습</span>
-        </button>
-        <button className="flex flex-col items-center gap-1 text-gray-400">
-          <span className="material-symbols-outlined">history</span>
-          <span className="text-[10px] font-medium">리마인드</span>
-        </button>
-        <button className="flex flex-col items-center gap-1 text-gray-400">
-          <span className="material-symbols-outlined">person</span>
-          <span className="text-[10px] font-medium">프로필</span>
-        </button>
-      </nav>
+      <div className="fixed bottom-0 left-0 right-0 bg-white/90 backdrop-blur-xl border-t border-gray-100 px-6 py-4">
+        <div className="flex justify-around">
+          <button className="flex flex-col items-center gap-1 text-blue-600">
+            <Home size={20} />
+            <span className="text-xs font-bold">홈</span>
+          </button>
+          <button 
+            onClick={() => navigate("/study")}
+            className="flex flex-col items-center gap-1 text-gray-400"
+          >
+            <BookOpen size={20} />
+            <span className="text-xs font-medium">학습</span>
+          </button>
+          <button 
+            onClick={() => navigate("/remind")}
+            className="flex flex-col items-center gap-1 text-gray-400"
+          >
+            <History size={20} />
+            <span className="text-xs font-medium">리마인드</span>
+          </button>
+          <button 
+            onClick={() => navigate("/profile")}
+            className="flex flex-col items-center gap-1 text-gray-400"
+          >
+            <User size={20} />
+            <span className="text-xs font-medium">프로필</span>
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
