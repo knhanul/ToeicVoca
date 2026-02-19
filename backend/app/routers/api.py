@@ -2050,6 +2050,48 @@ def _get_remind_words_from_range(db, user_id, difficulty_level, cycle_no, start_
     return db.execute(vocab_stmt).all()
 
 
+def _get_remind_words_from_range_with_result(db, user_id, difficulty_level, cycle_no, start_day, end_day, result_value):
+    """특정 Day 범위와 회차에서 최신 결과가 특정 값(result_value)인 단어들을 추출하는 헬퍼 함수"""
+    latest_ts_subq = (
+        select(StudyLog.vocab_id.label("vocab_id"), func.max(StudyLog.studied_at).label("max_ts"))
+        .where(
+            and_(
+                StudyLog.user_id == user_id,
+                StudyLog.difficulty_level == difficulty_level,
+                StudyLog.cycle_no == cycle_no,
+            )
+        )
+        .group_by(StudyLog.vocab_id)
+        .subquery()
+    )
+
+    latest_logs_subq = (
+        select(StudyLog.vocab_id.label("vocab_id"), StudyLog.result.label("result"))
+        .join(
+            latest_ts_subq,
+            and_(StudyLog.vocab_id == latest_ts_subq.c.vocab_id, StudyLog.studied_at == latest_ts_subq.c.max_ts),
+        )
+        .subquery()
+    )
+
+    vocab_stmt = (
+        select(Vocab, latest_logs_subq.c.result)
+        .join(latest_logs_subq, latest_logs_subq.c.vocab_id == Vocab.id)
+        .where(
+            and_(
+                Vocab.difficulty_level == difficulty_level,
+                Vocab.day.is_not(None),
+                Vocab.day >= start_day,
+                Vocab.day <= end_day,
+                latest_logs_subq.c.result == result_value,
+            )
+        )
+        .order_by(Vocab.day.asc(), Vocab.id.asc())
+    )
+
+    return db.execute(vocab_stmt).all()
+
+
 @api_router.post("/remind/session/start", response_model=RemindSessionOut)
 def start_remind_session(payload: RemindSessionStart, db: Session = Depends(get_db)):
     user = db.get(User, payload.user_id)
@@ -2080,6 +2122,11 @@ def start_remind_session(payload: RemindSessionStart, db: Session = Depends(get_
         current_day = int(last_studied_day)
 
     # 현재 Day에 따른 기간 계산
+    current_cycle_words = []
+    prev_cycle_words = []
+    prev_cycle_start = None
+    prev_cycle_end = None
+    
     if current_day <= 7:
         # 현재 Day가 7 이하인 경우
         # 1) 현재 회차: 1Day ~ 현재 Day
@@ -2120,6 +2167,11 @@ def start_remind_session(payload: RemindSessionStart, db: Session = Depends(get_
             current_cycle_start, current_cycle_end
         )
         remind_words.extend(current_cycle_words)
+
+        current_cycle_again_words = _get_remind_words_from_range_with_result(
+            db, payload.user_id, payload.difficulty_level, cycle.cycle_no,
+            current_cycle_start, current_cycle_end, "again"
+        )
         
         # 직전 회차 구간 검색
         if prev_cycle_start is not None and prev_cycle_end is not None:
@@ -2128,6 +2180,17 @@ def start_remind_session(payload: RemindSessionStart, db: Session = Depends(get_
                 prev_cycle_start, prev_cycle_end
             )
             remind_words.extend(prev_cycle_words)
+
+            prev_cycle_again_words = _get_remind_words_from_range_with_result(
+                db, payload.user_id, payload.difficulty_level, cycle.cycle_no - 1,
+                prev_cycle_start, prev_cycle_end, "again"
+            )
+        else:
+            prev_cycle_again_words = []
+
+        # again(몰라요) 단어는 세션 내에서 1회 추가 출제되도록, 최초 세션 확정 시 words 뒤에 한 번 더 추가
+        remind_words.extend(current_cycle_again_words)
+        remind_words.extend(prev_cycle_again_words)
         
         rows = remind_words
         
@@ -2140,6 +2203,14 @@ def start_remind_session(payload: RemindSessionStart, db: Session = Depends(get_
             db, payload.user_id, payload.difficulty_level, cycle.cycle_no,
             start_day, end_day
         )
+
+        again_rows = _get_remind_words_from_range_with_result(
+            db, payload.user_id, payload.difficulty_level, cycle.cycle_no,
+            start_day, end_day, "again"
+        )
+
+        # again(몰라요) 단어는 세션 내에서 1회 추가 출제되도록, 최초 세션 확정 시 words 뒤에 한 번 더 추가
+        rows.extend(again_rows)
 
     if not rows:
         # 리마인드할 단어가 없는 경우 확인
@@ -2172,7 +2243,7 @@ def start_remind_session(payload: RemindSessionStart, db: Session = Depends(get_
             "word": vocab.word,
             "meaning": vocab.meaning,
             "day": vocab.day,
-            "last_result": result
+            "last_result": result,
         })
 
     session_data = {
@@ -2319,7 +2390,7 @@ def submit_remind_answer(session_id: str, submission: GradeSubmission = Body(...
     
     # 기존 리마인드 제출 로직 호출
     submit_remind_review(payload, db)
-    
+
     # 세션 업데이트
     session["current_index"] += 1
     session["completed_count"] += 1  # 모든 답변을 진행으로 간주

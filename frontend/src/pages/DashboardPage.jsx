@@ -290,8 +290,9 @@ export default function DashboardPage() {
         console.log("handleStudyClick - completed_days:", level?.completed_days);
         console.log("handleStudyClick - total_days:", level?.total_days);
         
-        // Check if current cycle is completed (no open day and cycle is active)
-        if (level && (!level.open_day || level.open_day === null) && level.cycle_status === "active") {
+        // Check if current cycle is completed (all days completed and no open day)
+        // Only trigger next cycle dialog when the user has actually completed all days
+        if (level && level.completed_days >= level.total_days && (!level.open_day || level.open_day === null) && level.cycle_status === "active") {
           console.log("handleStudyClick - triggering next cycle dialog");
           const ok = window.confirm("🎉 30일 학습을 모두 완료했습니다! 다음 회독을 시작하시겠습니까?");
           if (!ok) return;
