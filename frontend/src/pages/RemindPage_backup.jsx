@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import BoldMarkup from "../components/BoldMarkup.jsx";
 
-const API_BASE = import.meta.env.VITE_API_BASE || "/hackersvoca/api";
+const API_BASE = import.meta.env.VITE_API_BASE || "/api";
 
 export default function RemindPage() {
   const [card, setCard] = useState(null);

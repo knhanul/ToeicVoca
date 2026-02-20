@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { BookOpen, RefreshCw, ChevronRight, User, Bell, Award, ArrowLeft, Home, History } from "lucide-react";
 import BoldMarkup from "../components/BoldMarkup.jsx";
 
-const API_BASE = "http://localhost:4000/api"; // Force direct connection
+const API_BASE = "/api"; // Force direct connection
 
 export default function RemindPage() {
   const [card, setCard] = useState(null);

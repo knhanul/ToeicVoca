@@ -2,7 +2,7 @@ import { useMemo, useState, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Home, BookOpen, History, User } from "lucide-react";
 
-const API_BASE = "http://localhost:4000/api"; // Force direct connection
+const API_BASE = "/api"; // Force direct connection
 
 export default function DashboardPage() {
   const [user, setUser] = useState(null);

@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { User, Mail, Lock, Eye, EyeOff, Check, X, ArrowLeft, Home, BookOpen, History, LogOut } from "lucide-react";
 
-const API_BASE = "http://localhost:4000/api";
+const API_BASE = "/api";
 
 export default function ProfilePage() {
   const [user, setUser] = useState(null);
