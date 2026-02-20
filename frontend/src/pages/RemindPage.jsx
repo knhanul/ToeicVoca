@@ -308,29 +308,31 @@ export default function RemindPage() {
   return (
     <div className="min-h-screen bg-[#F8F9FA] pb-24">
       {/* 1. 상단 헤더: 사용자 정보와 현재 상태 */}
-      <div className="sticky top-0 z-50 bg-gradient-to-r from-orange-600 to-red-600 backdrop-blur-md px-6 py-6 border-b border-orange-500/20 shadow-lg">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
+      <div className="sticky top-0 z-50 bg-gradient-to-r from-orange-600 to-red-600 backdrop-blur-md px-4 sm:px-6 py-4 sm:py-6 border-b border-orange-500/20 shadow-lg">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3 sm:gap-4 flex-1 min-w-0">
             <button
               onClick={handleBackToDashboard}
               className="p-3 bg-white/20 rounded-xl shadow-sm border border-white/30 backdrop-blur-sm hover:bg-white/30 transition-all"
             >
               <ArrowLeft size={20} className="text-white" />
             </button>
-            <div className="flex items-center gap-4">
-              <div className="w-12 h-12 rounded-full bg-gradient-to-br from-white to-orange-50 flex items-center justify-center shadow-lg border-2 border-white/30">
+            <div className="flex items-center gap-3 sm:gap-4 flex-1 min-w-0">
+              <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-gradient-to-br from-white to-orange-50 flex items-center justify-center shadow-lg border-2 border-white/30 shrink-0">
                 <RefreshCw size={20} className="text-orange-600" />
               </div>
-              <div>
-                <div className="text-xl font-bold text-white">{user.username || '학습자'} 님</div>
+              <div className="min-w-0">
+                <div className="text-base sm:text-xl font-bold text-white truncate">
+                  {user.username || '학습자'} 님
+                </div>
               </div>
             </div>
           </div>
           
-          <div className="flex items-center gap-6">
-            <div className="text-right">
-              <div className="text-lg font-bold text-white">리마인드</div>
-              <div className="text-sm text-orange-100 font-medium">
+          <div className="flex items-center gap-6 shrink-0">
+            <div className="text-right max-w-[45vw] sm:max-w-none">
+              <div className="text-base sm:text-lg font-bold text-white whitespace-nowrap">리마인드</div>
+              <div className="text-xs sm:text-sm text-orange-100 font-medium truncate">
                 {selectedLevel}점대 • {session ? `${session.completed_count + 1}/${session.total_words} 진행중` : '복습 준비중'}
               </div>
             </div>
