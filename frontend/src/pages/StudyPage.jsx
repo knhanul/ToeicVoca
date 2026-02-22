@@ -581,7 +581,7 @@ export default function StudyPage() {
                       : "bg-orange-500 text-white hover:bg-orange-600 active:scale-[0.98] shadow-md"
                   }`}
                 >
-                  애매해요
+                  헷갈려요
                 </button>
                 <button
                   onClick={() => submit("perfect")}
@@ -592,7 +592,7 @@ export default function StudyPage() {
                       : "bg-green-500 text-white hover:bg-green-600 active:scale-[0.98] shadow-md"
                   }`}
                 >
-                  알아요
+                  완벽히 알아요
                 </button>
               </div>
             </div>
@@ -620,7 +620,7 @@ export default function StudyPage() {
             <div className="text-sm font-bold text-gray-900">
               Day {dayProgress.day} 진행률
               {excludePerfect && (
-                <span className="text-xs text-gray-500 ml-2">(Perfect 단어 제외)</span>
+                <span className="text-xs text-gray-500 ml-2">(완벽 단어 제외)</span>
               )}
             </div>
             <div className="text-sm font-semibold text-indigo-600">
@@ -669,7 +669,7 @@ export default function StudyPage() {
               {dayProgress.progressed_words}개 완료
               {excludePerfect && (
                 <span className="text-xs text-gray-400 ml-1">
-                  (Perfect {dayProgress.perfect_words || 0}개 제외)
+                  (완벽 {dayProgress.perfect_words || 0}개 제외)
                 </span>
               )}
             </div>

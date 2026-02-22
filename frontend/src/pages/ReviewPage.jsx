@@ -295,7 +295,7 @@ export default function ReviewPage() {
                     }}
                     disabled={loading}
                   >
-                    애매해요 (Good)
+                    헷갈려요 (Good)
                   </button>
                   <button
                     onClick={() => submit("perfect")}
@@ -313,7 +313,7 @@ export default function ReviewPage() {
                     }}
                     disabled={loading}
                   >
-                    알아요 (Perfect)
+                    완벽 (Perfect)
                   </button>
                 </div>
               </>

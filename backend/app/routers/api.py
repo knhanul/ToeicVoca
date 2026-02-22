@@ -1852,45 +1852,92 @@ def get_levels_stats(user_id: int = Query(...), db: Session = Depends(get_db)):
             )
         ).scalar_one() or 0
 
-        # 2. 전 회차까지 Perfect인 단어 찾기 (최신 결과 기준으로 수정)
+        # 2. 이전 회차 마지막 결과 Perfect + 현재 회차 Perfect인 단어 찾기
         if cycle.cycle_no > 1:
-            # Use Raw SQL to match study page logic exactly
+            # 이전 회차 마지막 결과 Perfect + 현재 회차 Perfect인 단어 찾기
             perfect_words_query = text("""
-                SELECT DISTINCT vocab_id
-                FROM (
+                SELECT DISTINCT sl.vocab_id
+                FROM study_logs sl
+                JOIN (
                     SELECT vocab_id, result
-                    FROM study_logs sl
-                    WHERE sl.user_id = :user_id 
-                      AND sl.difficulty_level = :difficulty_level
-                      AND sl.studied_at = (
+                    FROM study_logs sl_prev
+                    WHERE sl_prev.user_id = :user_id 
+                      AND sl_prev.difficulty_level = :difficulty_level
+                      AND sl_prev.cycle_no = :previous_cycle_no
+                      AND sl_prev.studied_at = (
                           SELECT MAX(studied_at)
                           FROM study_logs
                           WHERE user_id = :user_id 
-                            AND vocab_id = sl.vocab_id
+                            AND vocab_id = sl_prev.vocab_id
                             AND difficulty_level = :difficulty_level
+                            AND cycle_no = :previous_cycle_no
                       )
-                ) AS latest_results
-                WHERE latest_results.result = 'perfect'
+                ) AS previous_cycle_latest ON sl.vocab_id = previous_cycle_latest.vocab_id
+                JOIN (
+                    SELECT vocab_id, result
+                    FROM study_logs sl_current
+                    WHERE sl_current.user_id = :user_id 
+                      AND sl_current.difficulty_level = :difficulty_level
+                      AND sl_current.cycle_no = :current_cycle_no
+                      AND sl_current.studied_at = (
+                          SELECT MAX(studied_at)
+                          FROM study_logs
+                          WHERE user_id = :user_id 
+                            AND vocab_id = sl_current.vocab_id
+                            AND difficulty_level = :difficulty_level
+                            AND cycle_no = :current_cycle_no
+                      )
+                ) AS current_cycle_latest ON sl.vocab_id = current_cycle_latest.vocab_id
+                WHERE previous_cycle_latest.result = 'perfect'
+                  AND current_cycle_latest.result = 'perfect'
             """)
             
             perfect_words_result = db.execute(perfect_words_query, {
                 "user_id": user_id,
-                "cycle_no": cycle.cycle_no,
+                "previous_cycle_no": cycle.cycle_no - 1,
+                "current_cycle_no": cycle.cycle_no,
                 "difficulty_level": level
             }).fetchall()
             
+            previous_perfect_vocab_ids = [row[0] for row in perfect_words_result]
             previous_perfect_count = len(perfect_words_result)
         else:
+            previous_perfect_vocab_ids = []
             previous_perfect_count = 0
 
         # 3. 현재 회차에서 학습해야 할 총 단어 수 (전 회차 Perfect 제외)
         current_cycle_total = max(0, int(total_vocab) - previous_perfect_count)
 
-        # 4. 현재 회차 진도율 계산
+        # 4. 현재 회차 진도율 계산 - 이전 회차 Perfect 단어 제외
         current_cycle_progress_pct = 0
         if current_cycle_total == 0:
             current_cycle_progress_pct = 100
         else:
+            # 현재 회차 학습 단어 중 이전 회차 Perfect인 단어 제외
+            if previous_perfect_vocab_ids:
+                # 현재 회차에서 학습한 단어 중 이전 회차 Perfect가 아닌 단어만 카운트
+                current_cycle_progressed_query = text("""
+                    SELECT COUNT(DISTINCT up.vocab_id)
+                    FROM user_progress up
+                    JOIN vocab v ON v.id = up.vocab_id
+                    WHERE up.user_id = :user_id 
+                      AND v.difficulty_level = :difficulty_level
+                      AND up.cycle_no = :cycle_no
+                      AND v.id NOT IN (SELECT unnest(:previous_perfect_vocab_ids))
+                """)
+                
+                current_cycle_progressed_result = db.execute(current_cycle_progressed_query, {
+                    "user_id": user_id,
+                    "difficulty_level": level,
+                    "cycle_no": cycle.cycle_no,
+                    "previous_perfect_vocab_ids": list(previous_perfect_vocab_ids)
+                }).scalar_one()
+                
+                current_cycle_progressed = current_cycle_progressed_result
+            else:
+                # 이전 회차 Perfect 단어가 없으면 현재 회차 진행 단어 그대로 사용
+                pass  # current_cycle_progressed는 이미 계산된 값 사용
+            
             current_cycle_progress_pct = int((current_cycle_progressed / current_cycle_total) * 100)
 
         levels_out.append(

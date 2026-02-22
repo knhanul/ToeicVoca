@@ -592,7 +592,7 @@ export default function DashboardPage() {
                       <div className="text-xs text-gray-500">
                         완성도 {completionRate}%
                         {excludePerfect && levelData.current_cycle_total_words < levelData.total && (
-                          <span className="text-amber-600 ml-1">(Perfect 제외)</span>
+                          <span className="text-amber-600 ml-1">(완벽 제외)</span>
                         )}
                       </div>
                     </div>
@@ -607,7 +607,7 @@ export default function DashboardPage() {
                   <div className="flex justify-between text-xs text-gray-500">
                     <div className="flex gap-3">
                       <span>현재 Day {completedDays + 1}</span>
-                      <span>Perfect {perfect}</span>
+                      <span>완벽 {perfect}</span>
                       <span>전체 {excludePerfect && levelData.current_cycle_total_words < levelData.total ? `${levelData.current_cycle_total_words} (제외 ${levelData.total - levelData.current_cycle_total_words})` : `${total}`}</span>
                     </div>
                     <button
@@ -678,7 +678,7 @@ export default function DashboardPage() {
                                               </span>
                                             </div>
                                             <div className="text-xs text-gray-600 mt-1">
-                                              모름 {d.unknown_count} / 애매 {d.unsure_count} / 완료 {d.perfect_count} (총 {d.total_count})
+                                              몰라요 {d.unknown_count} / 헷갈려요 {d.unsure_count} / 완벽 {d.perfect_count} (총 {d.total_count})
                                             </div>
                                           </div>
                                         </div>
@@ -717,7 +717,11 @@ export default function DashboardPage() {
                                                 - {r.topic}
                                               </span>
                                             )}
-                                            <span className="text-xs text-gray-600 ml-2">{r.result}</span>
+                                            <span className="text-xs text-gray-600 ml-2">
+                                              {r.result === 'perfect' ? '완벽' : 
+                                               r.result === 'good' ? '헷갈려요' : 
+                                               r.result === 'again' ? '몰라요' : r.result}
+                                            </span>
                                           </div>
                                           <div className="text-xs text-gray-400 mt-1">
                                             {new Date(r.studied_at).toLocaleString()}
@@ -751,10 +755,10 @@ export default function DashboardPage() {
             <div className="flex items-center gap-3">
               <div>
                 <span className="text-sm font-medium text-gray-700">
-                  Perfect 단어 제외
+                  완벽 단어 제외
                 </span>
                 <p className="text-xs text-gray-500 mt-1">
-                  이전 회차까지 Perfect인 단어는 학습률 계산에서 제외
+                  이전 회차까지 완벽인 단어는 학습률 계산에서 제외
                 </p>
               </div>
             </div>

@@ -489,7 +489,7 @@ export default function RemindPage() {
                       : "bg-orange-500 text-white hover:bg-orange-600 active:scale-[0.98] shadow-md"
                   }`}
                 >
-                  애매해요
+                  헷갈려요
                 </button>
                 <button
                   onClick={() => submit("perfect")}
@@ -500,7 +500,7 @@ export default function RemindPage() {
                       : "bg-green-500 text-white hover:bg-green-600 active:scale-[0.98] shadow-md"
                   }`}
                 >
-                  알아요
+                  완벽히 알아요
                 </button>
               </div>
 
