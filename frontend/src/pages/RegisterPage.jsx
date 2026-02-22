@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
+const NUNI_LOGO_SRC = "/nuni_logo.png";
+
 const API_BASE = import.meta.env.VITE_API_BASE || "/api";
 
 export default function RegisterPage() {
@@ -127,6 +129,11 @@ export default function RegisterPage() {
         maxWidth: 400
       }}>
         <div style={{ textAlign: "center", marginBottom: 32 }}>
+          <img
+            src={NUNI_LOGO_SRC}
+            alt="누니보카학습"
+            style={{ width: "auto", height: 88, objectFit: "contain", marginBottom: 12 }}
+          />
           <h1 style={{
             fontSize: 32,
             fontWeight: 700,
@@ -136,7 +143,7 @@ export default function RegisterPage() {
             회원가입
           </h1>
           <p style={{ color: "#666" }}>
-            TOEIC VOCA에 가입하고 학습을 시작하세요
+            누니보카학습에 가입하고 학습을 시작하세요
           </p>
         </div>
 

@@ -441,14 +441,9 @@ export default function StudyPage() {
             >
               <ArrowLeft size={20} className="text-white" />
             </button>
-            <div className="flex items-center gap-3 sm:gap-4 flex-1 min-w-0">
-              <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-gradient-to-br from-white to-blue-50 flex items-center justify-center shadow-lg border-2 border-white/30 shrink-0">
-                <User size={20} className="text-blue-600" />
-              </div>
-              <div className="min-w-0">
-                <div className="text-base sm:text-xl font-bold text-white truncate">
-                  {user.username || '학습자'} 님
-                </div>
+            <div className="min-w-0">
+              <div className="text-base sm:text-xl font-bold text-white truncate">
+                {user.username || '학습자'} 님
               </div>
             </div>
           </div>
@@ -459,6 +454,9 @@ export default function StudyPage() {
               <div className="text-xs sm:text-sm text-blue-100 font-medium truncate">
                 {selectedLevel}점대 • {dayInfo?.open_day ? `Day ${dayInfo.open_day} 학습중` : '학습 준비중'}
               </div>
+            </div>
+            <div className="h-10 sm:h-12 w-auto flex items-center justify-center shrink-0">
+              <img src="/nuni_logo.png" alt="누니보카학습" className="h-full w-auto object-contain" />
             </div>
           </div>
         </div>

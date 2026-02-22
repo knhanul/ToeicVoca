@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
+const NUNI_LOGO_SRC = "/nuni_logo.png";
+
 const API_BASE = "/api"; // Force direct connection
 console.log("API_BASE:", API_BASE);
 
@@ -92,6 +94,11 @@ export default function LoginPage() {
         maxWidth: 400
       }}>
         <div style={{ textAlign: "center", marginBottom: 32 }}>
+          <img
+            src={NUNI_LOGO_SRC}
+            alt="누니보카학습"
+            style={{ width: "auto", height: 88, objectFit: "contain", marginBottom: 12 }}
+          />
           <h1 style={{
             fontSize: 32,
             fontWeight: 700,
@@ -101,7 +108,7 @@ export default function LoginPage() {
             로그인
           </h1>
           <p style={{ color: "#666" }}>
-            TOEIC VOCA에 오신 것을 환영합니다
+            누니보카학습에 오신 것을 환영합니다
           </p>
         </div>
 

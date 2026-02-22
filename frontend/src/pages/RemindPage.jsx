@@ -317,14 +317,9 @@ export default function RemindPage() {
             >
               <ArrowLeft size={20} className="text-white" />
             </button>
-            <div className="flex items-center gap-3 sm:gap-4 flex-1 min-w-0">
-              <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-gradient-to-br from-white to-orange-50 flex items-center justify-center shadow-lg border-2 border-white/30 shrink-0">
-                <RefreshCw size={20} className="text-orange-600" />
-              </div>
-              <div className="min-w-0">
-                <div className="text-base sm:text-xl font-bold text-white truncate">
-                  {user.username || '학습자'} 님
-                </div>
+            <div className="min-w-0">
+              <div className="text-base sm:text-xl font-bold text-white truncate">
+                {user.username || '학습자'} 님
               </div>
             </div>
           </div>
@@ -335,6 +330,9 @@ export default function RemindPage() {
               <div className="text-xs sm:text-sm text-orange-100 font-medium truncate">
                 {selectedLevel}점대 • {session ? `${session.completed_count + 1}/${session.total_words} 진행중` : '복습 준비중'}
               </div>
+            </div>
+            <div className="h-10 sm:h-12 w-auto flex items-center justify-center shrink-0">
+              <img src="/nuni_logo.png" alt="누니보카학습" className="h-full w-auto object-contain" />
             </div>
           </div>
         </div>

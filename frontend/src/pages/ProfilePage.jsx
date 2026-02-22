@@ -218,18 +218,16 @@ export default function ProfilePage() {
             >
               <ArrowLeft size={20} className="text-white" />
             </button>
-            <div className="flex items-center gap-3 sm:gap-4 flex-1 min-w-0">
-              <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-gradient-to-br from-white to-blue-50 flex items-center justify-center shadow-lg border-2 border-white/30 shrink-0">
-                <User size={20} className="text-blue-600" />
-              </div>
-              <div className="min-w-0">
-                <div className="text-base sm:text-xl font-bold text-white truncate">{user.username || '학습자'} 님</div>
-                <div className="text-xs sm:text-sm text-blue-100 font-medium whitespace-nowrap">프로필 설정</div>
-              </div>
+            <div className="min-w-0">
+              <div className="text-base sm:text-xl font-bold text-white truncate">{user.username || '학습자'} 님</div>
+              <div className="text-xs sm:text-sm text-blue-100 font-medium whitespace-nowrap">프로필 설정</div>
             </div>
           </div>
           
           <div className="flex items-center gap-6 shrink-0">
+            <div className="h-10 sm:h-12 w-auto flex items-center justify-center shrink-0">
+              <img src="/nuni_logo.png" alt="누니보카학습" className="h-full w-auto object-contain" />
+            </div>
             <button
               onClick={handleLogout}
               className="flex items-center gap-2 px-3 sm:px-4 py-2 bg-white/20 rounded-xl shadow-sm border border-white/30 backdrop-blur-sm hover:bg-white/30 transition-all text-white font-medium"

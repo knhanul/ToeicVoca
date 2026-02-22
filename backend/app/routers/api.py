@@ -1565,7 +1565,7 @@ def confirm_cycle(payload: ConfirmCycleIn, db: Session = Depends(get_db)):
 
 
 @api_router.get("/stats/levels", response_model=LevelsStatsOut)
-def get_levels_stats(user_id: int = Query(...), db: Session = Depends(get_db)):
+def get_levels_stats(user_id: int = Query(...), exclude_perfect: bool = Query(False), db: Session = Depends(get_db)):
     user = db.get(User, user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="user not found")
@@ -1852,93 +1852,144 @@ def get_levels_stats(user_id: int = Query(...), db: Session = Depends(get_db)):
             )
         ).scalar_one() or 0
 
-        # 2. 이전 회차 마지막 결과 Perfect + 현재 회차 Perfect인 단어 찾기
+        # Exclude-perfect progress requires knowing which vocab were already "perfect" before current cycle.
+        prev_final_perfect_count = 0
+        prev_final_perfect_studied_in_current_count = 0
         if cycle.cycle_no > 1:
-            # 이전 회차 마지막 결과 Perfect + 현재 회차 Perfect인 단어 찾기
-            perfect_words_query = text("""
-                SELECT DISTINCT sl.vocab_id
-                FROM study_logs sl
-                JOIN (
-                    SELECT vocab_id, result
+            prev_final_perfect_count_query = text("""
+                SELECT COUNT(*)
+                FROM (
+                    SELECT sl_prev.vocab_id
                     FROM study_logs sl_prev
-                    WHERE sl_prev.user_id = :user_id 
+                    JOIN (
+                        SELECT vocab_id, MAX(studied_at) AS max_ts
+                        FROM study_logs
+                        WHERE user_id = :user_id
+                          AND difficulty_level = :difficulty_level
+                          AND cycle_no < :current_cycle_no
+                        GROUP BY vocab_id
+                    ) t
+                      ON t.vocab_id = sl_prev.vocab_id
+                     AND t.max_ts = sl_prev.studied_at
+                    WHERE sl_prev.user_id = :user_id
                       AND sl_prev.difficulty_level = :difficulty_level
-                      AND sl_prev.cycle_no = :previous_cycle_no
-                      AND sl_prev.studied_at = (
-                          SELECT MAX(studied_at)
-                          FROM study_logs
-                          WHERE user_id = :user_id 
-                            AND vocab_id = sl_prev.vocab_id
-                            AND difficulty_level = :difficulty_level
-                            AND cycle_no = :previous_cycle_no
-                      )
-                ) AS previous_cycle_latest ON sl.vocab_id = previous_cycle_latest.vocab_id
-                JOIN (
-                    SELECT vocab_id, result
-                    FROM study_logs sl_current
-                    WHERE sl_current.user_id = :user_id 
-                      AND sl_current.difficulty_level = :difficulty_level
-                      AND sl_current.cycle_no = :current_cycle_no
-                      AND sl_current.studied_at = (
-                          SELECT MAX(studied_at)
-                          FROM study_logs
-                          WHERE user_id = :user_id 
-                            AND vocab_id = sl_current.vocab_id
-                            AND difficulty_level = :difficulty_level
-                            AND cycle_no = :current_cycle_no
-                      )
-                ) AS current_cycle_latest ON sl.vocab_id = current_cycle_latest.vocab_id
-                WHERE previous_cycle_latest.result = 'perfect'
-                  AND current_cycle_latest.result = 'perfect'
+                      AND sl_prev.cycle_no < :current_cycle_no
+                      AND sl_prev.result = 'perfect'
+                ) p
             """)
-            
-            perfect_words_result = db.execute(perfect_words_query, {
-                "user_id": user_id,
-                "previous_cycle_no": cycle.cycle_no - 1,
-                "current_cycle_no": cycle.cycle_no,
-                "difficulty_level": level
-            }).fetchall()
-            
-            previous_perfect_vocab_ids = [row[0] for row in perfect_words_result]
-            previous_perfect_count = len(perfect_words_result)
-        else:
-            previous_perfect_vocab_ids = []
-            previous_perfect_count = 0
 
-        # 3. 현재 회차에서 학습해야 할 총 단어 수 (전 회차 Perfect 제외)
-        current_cycle_total = max(0, int(total_vocab) - previous_perfect_count)
+            prev_final_perfect_count = (
+                db.execute(
+                    prev_final_perfect_count_query,
+                    {
+                        "user_id": user_id,
+                        "difficulty_level": level,
+                        "current_cycle_no": cycle.cycle_no,
+                    },
+                ).scalar_one()
+                or 0
+            )
 
-        # 4. 현재 회차 진도율 계산 - 이전 회차 Perfect 단어 제외
-        current_cycle_progress_pct = 0
-        if current_cycle_total == 0:
-            current_cycle_progress_pct = 100
+            prev_final_perfect_studied_in_current_query = text("""
+                SELECT COUNT(DISTINCT sl_current.vocab_id)
+                FROM study_logs sl_current
+                JOIN (
+                    SELECT sl_prev.vocab_id
+                    FROM study_logs sl_prev
+                    JOIN (
+                        SELECT vocab_id, MAX(studied_at) AS max_ts
+                        FROM study_logs
+                        WHERE user_id = :user_id
+                          AND difficulty_level = :difficulty_level
+                          AND cycle_no < :current_cycle_no
+                        GROUP BY vocab_id
+                    ) t
+                      ON t.vocab_id = sl_prev.vocab_id
+                     AND t.max_ts = sl_prev.studied_at
+                    WHERE sl_prev.user_id = :user_id
+                      AND sl_prev.difficulty_level = :difficulty_level
+                      AND sl_prev.cycle_no < :current_cycle_no
+                      AND sl_prev.result = 'perfect'
+                ) prev_perfect
+                  ON prev_perfect.vocab_id = sl_current.vocab_id
+                WHERE sl_current.user_id = :user_id
+                  AND sl_current.difficulty_level = :difficulty_level
+                  AND sl_current.cycle_no = :current_cycle_no
+            """)
+
+            prev_final_perfect_studied_in_current_count = (
+                db.execute(
+                    prev_final_perfect_studied_in_current_query,
+                    {
+                        "user_id": user_id,
+                        "difficulty_level": level,
+                        "current_cycle_no": cycle.cycle_no,
+                    },
+                ).scalar_one()
+                or 0
+            )
+
+        # Get final results for completion rate (regardless of cycle)
+        final_perfect_query = text("""
+            SELECT COUNT(DISTINCT v.id)
+            FROM vocab v
+            JOIN (
+                SELECT vocab_id, result, studied_at
+                FROM study_logs sl_final
+                WHERE sl_final.user_id = :user_id 
+                  AND sl_final.difficulty_level = :difficulty_level
+                  AND sl_final.studied_at = (
+                      SELECT MAX(studied_at)
+                      FROM study_logs
+                      WHERE user_id = :user_id 
+                        AND vocab_id = sl_final.vocab_id
+                        AND difficulty_level = :difficulty_level
+                  )
+            ) AS final_results ON v.id = final_results.vocab_id
+            WHERE v.difficulty_level = :difficulty_level
+              AND final_results.result = 'perfect'
+        """)
+        
+        final_perfect_result = db.execute(final_perfect_query, {
+            "user_id": user_id,
+            "difficulty_level": level
+        }).scalar_one() or 0
+
+        # We use StudyLog distinct vocab count for "현재 회차에서 학습한 단어건수"
+        current_cycle_studied_result = int(current_cycle_progressed)
+
+        # Denominator for exclude-perfect: total vocab - (prev cycles final perfect vocab)
+        not_perfect_final_result = max(0, int(total_vocab) - int(prev_final_perfect_count))
+
+        # Calculate completion rate (always based on final perfect words)
+        if int(total_vocab) > 0:
+            completion_rate = int((final_perfect_result / int(total_vocab)) * 100)
         else:
-            # 현재 회차 학습 단어 중 이전 회차 Perfect인 단어 제외
-            if previous_perfect_vocab_ids:
-                # 현재 회차에서 학습한 단어 중 이전 회차 Perfect가 아닌 단어만 카운트
-                current_cycle_progressed_query = text("""
-                    SELECT COUNT(DISTINCT up.vocab_id)
-                    FROM user_progress up
-                    JOIN vocab v ON v.id = up.vocab_id
-                    WHERE up.user_id = :user_id 
-                      AND v.difficulty_level = :difficulty_level
-                      AND up.cycle_no = :cycle_no
-                      AND v.id NOT IN (SELECT unnest(:previous_perfect_vocab_ids))
-                """)
-                
-                current_cycle_progressed_result = db.execute(current_cycle_progressed_query, {
-                    "user_id": user_id,
-                    "difficulty_level": level,
-                    "cycle_no": cycle.cycle_no,
-                    "previous_perfect_vocab_ids": list(previous_perfect_vocab_ids)
-                }).scalar_one()
-                
-                current_cycle_progressed = current_cycle_progressed_result
-            else:
-                # 이전 회차 Perfect 단어가 없으면 현재 회차 진행 단어 그대로 사용
-                pass  # current_cycle_progressed는 이미 계산된 값 사용
-            
-            current_cycle_progress_pct = int((current_cycle_progressed / current_cycle_total) * 100)
+            completion_rate = 0
+
+        # Progress (학습률)
+        # 1) excludePerfect OFF
+        #    - denom: total vocab
+        #    - numer: current cycle studied vocab count
+        # 2) excludePerfect ON
+        #    - denom: total vocab - (prev cycles final perfect vocab count)
+        #    - numer: (current cycle studied vocab count) - (those studied in current cycle but already perfect before)
+        include_progress_pct = int((current_cycle_studied_result / int(total_vocab)) * 100) if int(total_vocab) > 0 else 0
+
+        exclude_numerator = max(0, int(current_cycle_studied_result) - int(prev_final_perfect_studied_in_current_count))
+        exclude_progress_pct = int((exclude_numerator / int(not_perfect_final_result)) * 100) if int(not_perfect_final_result) > 0 else 0
+
+        # Keep total/perfect counts stable regardless of exclude_perfect;
+        # only progress fields change.
+        day_progress_pct = include_progress_pct
+        current_cycle_progress_pct = exclude_progress_pct
+
+        # For UI convenience: use current_cycle_total_words as exclude denominator
+        # and current_cycle_progressed_words as exclude numerator.
+        current_cycle_total = int(not_perfect_final_result)
+        current_cycle_progressed = int(exclude_numerator)
+
+        perfect_vocab = int(final_perfect_result)
 
         levels_out.append(
             LevelStatsOut(

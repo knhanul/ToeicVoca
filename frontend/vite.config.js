@@ -2,7 +2,7 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
 export default defineConfig({
-  base: "/toeicvoca/", // <--- 핵심! 반드시 "/" 이어야 합니다.
+  base: "/", // 개발 환경에서는 루트 경로로 설정
   plugins: [react()],
   server: {
     proxy: {

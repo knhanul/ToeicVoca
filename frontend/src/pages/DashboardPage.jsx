@@ -61,6 +61,9 @@ export default function DashboardPage() {
         if (!r.ok) {
           throw new Error("Failed to save settings");
         }
+        
+        // Refresh data after setting change
+        await loadStats();
       } catch (e) {
         console.error("Failed to save exclude perfect settings:", e);
       }
@@ -123,7 +126,7 @@ export default function DashboardPage() {
     if (user) {
       loadStats();
     }
-  }, [user]);
+  }, [user, excludePerfect]);
 
   // Debug logging for stats data
   useEffect(() => {
@@ -165,7 +168,10 @@ export default function DashboardPage() {
       if (!userId) throw new Error("User not logged in");
 
       // 실제 API 호출로 통계 데이터 가져오기
-      const qs = new URLSearchParams({ user_id: String(userId) });
+      const qs = new URLSearchParams({ 
+        user_id: String(userId),
+        exclude_perfect: String(excludePerfect)
+      });
       const r = await fetch(`${API_BASE}/stats/levels?${qs.toString()}`);
       
       if (!r.ok) {
@@ -447,6 +453,13 @@ export default function DashboardPage() {
             <h2 className="text-sm font-bold text-gray-900">{user?.username}님</h2>
           </div>
         </div>
+        <div className="flex items-center gap-3">
+          <img
+            src="/nuni_logo.png"
+            alt="누니보카학습"
+            className="h-10 w-auto object-contain"
+          />
+        </div>
       </header>
 
       {/* Score Display */}
@@ -547,7 +560,7 @@ export default function DashboardPage() {
               const levelData = stats?.levels?.find((lvl) => lvl.difficulty_level === l.value);
               const levelStatsData = stats?.levelsStats?.find((lvl) => lvl.difficulty_level === l.value);
               const progress = levelData?.progress ?? 0;
-              const completionRate = levelData?.completionRate ?? 0;
+              const originalCompletionRate = levelData?.completionRate ?? 0;
               const total = levelData?.total ?? 0;
               const perfect = levelData?.perfectWords ?? 0;
               const previousCyclePerfect = levelData?.previousCyclePerfectWords ?? 0;
@@ -570,10 +583,13 @@ export default function DashboardPage() {
               });
               
               // Calculate adjusted progress when Perfect exclusion is enabled
-              // Use backend-calculated cycle-based progress instead of frontend calculation
-              const adjustedProgress = excludePerfect && levelData.current_cycle_total_words < levelData.total
+              // Include(OFF): day_progress_pct, Exclude(ON): current_cycle_progress_pct
+              const adjustedProgress = excludePerfect
                 ? levelData.current_cycle_progress_pct
                 : levelData.day_progress_pct;
+              
+              // Use backend completion rate directly (always based on final perfect words)
+              const completionRate = levelData.completionRate || 0;
               
               return (
                 <div key={l.value} className="bg-white rounded-[24px] p-4 shadow-[0_4px_16px_rgba(0,0,0,0.04)] border border-gray-100/50">
@@ -589,12 +605,7 @@ export default function DashboardPage() {
                       <div className="text-lg font-bold text-gray-900">
                         {adjustedProgress}%
                       </div>
-                      <div className="text-xs text-gray-500">
-                        완성도 {completionRate}%
-                        {excludePerfect && levelData.current_cycle_total_words < levelData.total && (
-                          <span className="text-amber-600 ml-1">(완벽 제외)</span>
-                        )}
-                      </div>
+                      <div className="text-xs text-gray-500">현재 Day {completedDays + 1}</div>
                     </div>
                   </div>
                   <div className="relative h-2 w-full bg-gray-100 rounded-full overflow-hidden mb-2">
@@ -606,9 +617,9 @@ export default function DashboardPage() {
                   
                   <div className="flex justify-between text-xs text-gray-500">
                     <div className="flex gap-3">
-                      <span>현재 Day {completedDays + 1}</span>
+                      <span>완성도 {completionRate}%</span>
                       <span>완벽 {perfect}</span>
-                      <span>전체 {excludePerfect && levelData.current_cycle_total_words < levelData.total ? `${levelData.current_cycle_total_words} (제외 ${levelData.total - levelData.current_cycle_total_words})` : `${total}`}</span>
+                      <span>전체 {total}</span>
                     </div>
                     <button
                       onClick={() => toggleLevelDetail(l.value)}

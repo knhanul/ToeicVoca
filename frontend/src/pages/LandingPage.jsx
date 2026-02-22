@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import toeicVocaImage from "../assets/Toeic_Voca.png";
+const NUNI_LOGO_SRC = "/nuni_logo.png";
 
 export default function LandingPage() {
   return (
@@ -13,7 +13,7 @@ export default function LandingPage() {
       padding: 24,
       color: "white"
     }}>
-      {/* TOEIC VOCO 이미지 - 정중앙 */}
+      {/* 앱 로고 이미지 - 정중앙 */}
       <div style={{
         display: "flex",
         flexDirection: "column",
@@ -24,12 +24,13 @@ export default function LandingPage() {
         maxWidth: "600px"
       }}>
         <img 
-          src={toeicVocaImage}
-          alt="TOEIC VOCO" 
+          src={NUNI_LOGO_SRC}
+          alt="누니보카학습" 
           style={{
-            width: "100%",
-            maxWidth: "500px",
-            height: "auto",
+            height: "420px",
+            maxHeight: "60vh",
+            width: "auto",
+            maxWidth: "90vw",
             borderRadius: "16px",
             boxShadow: "0 8px 32px rgba(0,0,0,0.3)"
           }}
