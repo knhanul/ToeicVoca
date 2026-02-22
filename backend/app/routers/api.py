@@ -1990,6 +1990,18 @@ def get_levels_stats(user_id: int = Query(...), exclude_perfect: bool = Query(Fa
         current_cycle_progressed = int(exclude_numerator)
 
         perfect_vocab = int(final_perfect_result)
+        
+        # Safety: ensure all required fields have defaults
+        day_progress_pct = int(day_progress_pct) if day_progress_pct is not None else 0
+        current_cycle_progress_pct = int(current_cycle_progress_pct) if current_cycle_progress_pct is not None else 0
+        completed_days = int(completed_days) if completed_days is not None else 0
+        max_day = int(max_day) if max_day is not None else 30
+        memorization_pct = int(memorization_pct) if memorization_pct is not None else 0
+        current_cycle_total = int(current_cycle_total) if current_cycle_total is not None else 0
+        current_cycle_progressed = int(current_cycle_progressed) if current_cycle_progressed is not None else 0
+        total_vocab = int(total_vocab) if total_vocab is not None else 0
+        perfect_vocab = int(perfect_vocab) if perfect_vocab is not None else 0
+        previous_cycle_perfect_vocab = int(previous_cycle_perfect_vocab) if previous_cycle_perfect_vocab is not None else 0
 
         levels_out.append(
             LevelStatsOut(

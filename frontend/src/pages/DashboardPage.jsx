@@ -585,8 +585,8 @@ export default function DashboardPage() {
               // Calculate adjusted progress when Perfect exclusion is enabled
               // Include(OFF): day_progress_pct, Exclude(ON): current_cycle_progress_pct
               const adjustedProgress = excludePerfect
-                ? levelData.current_cycle_progress_pct
-                : levelData.day_progress_pct;
+                ? (levelData.current_cycle_progress_pct || 0)
+                : (levelData.day_progress_pct || 0);
               
               // Use backend completion rate directly (always based on final perfect words)
               const completionRate = levelData.completionRate || 0;
